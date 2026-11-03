@@ -595,6 +595,9 @@ The main ones:
   such tabs go last in their space, in the order made. `focus` is a boolean.
 - Panes: `pane.split {direction: "right" | "down", pane?, argv? | mod?, props?}` (a new
   terminal, or a mod pane), `pane.close {pane?}`,
+  `pane.move {pane?, tab}` or `{pane?, target, edge?}` (into a tab — after its
+  focused pane — or beside a pane in any tab at edge `"left" | "right" | "up" |
+  "down"`, default right; a pane stays on its own machine, its terminal running),
   `pane.zoom {pane?}`, `pane.focus {pane | terminal}`, `pane.go {direction}`,
   `pane.swap {pane?, direction | target}`.
   `pane.zoom` also makes the pane its tab's focused one (the tab isn't
