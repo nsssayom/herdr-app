@@ -1,7 +1,8 @@
 // Context menus (Herdr's items). Opened as a popup with
-// props { tab: "pane" | "tab" | "space" | "global", target }.
+// props { tab: "pane" | "tab" | "space" | "global" | "move-tab", target }.
 // ↑/↓ move, Enter runs, Esc closes. An item is [label, command, args];
-// a command "worktree" opens the worktree dialog instead.
+// a command "worktree" opens the worktree dialog instead, and "move-tab"
+// opens this menu again listing the spaces the tab can go to.
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex } from "gpui-base";
@@ -21,6 +22,25 @@ async function checkout(folder, on) {
   return common.stdout.trim() === `${top.stdout.trim()}/.git` ? "main" : "linked";
 }
 
+// The tab the window shows: tab.join's default target is its focused pane.
+function shownTab() {
+  const s = spaces().find((s) => s.active);
+  const tab = s?.tabs.find((c) => c.active);
+  return tab && { id: tab.id, machine: s.machine };
+}
+
+// The space of a right-clicked tab ({id, space}).
+function spaceOf(tg) {
+  const all = spaces();
+  return all.find((s) => s.id === tg.space) ?? all.find((s) => s.tabs.some((c) => c.id === tg.id));
+}
+
+// The other spaces a tab can move to: a tab stays on its own machine.
+function otherSpaces(tg) {
+  const own = spaceOf(tg);
+  return own ? spaces().filter((s) => s.id !== own.id && s.machine === own.machine) : [];
+}
+
 function items(p, git) {
   p = p ?? {};
   const tg = p.target ?? {};
@@ -34,7 +54,11 @@ function items(p, git) {
       const toProgram = term?.labels?.["herdr.right-click"] === "program";
       // A terminal shown outside a tab (a layout terminal block, a window) has
       // no pane to split, zoom or close: its pane is the block's id.
-      const inTab = panes().some((pane) => pane.pane === tg.pane);
+      const allPanes = panes();
+      const own = allPanes.find((pane) => pane.pane === tg.pane);
+      const inTab = Boolean(own);
+      // Alone in its tab, it already is a tab of its own.
+      const alone = !own || allPanes.filter((pane) => pane.tab === own.tab).length < 2;
       return [
         ...(inTab
           ? [
@@ -43,6 +67,7 @@ function items(p, git) {
               ["Zoom", "pane.zoom", { pane: tg.pane }],
             ]
           : []),
+        ...(inTab && !alone ? [["Move to new tab", "pane.move", { tab: "new", pane: tg.pane }]] : []),
         ...(term
           ? [
               toProgram
@@ -54,12 +79,26 @@ function items(p, git) {
         ...(inTab ? [["Close pane", "pane.close", { pane: tg.pane }]] : []),
       ];
     }
-    case "tab":
+    case "tab": {
+      // Joining needs another tab on screen, on the same machine.
+      const shown = shownTab();
+      const space = spaceOf(tg);
+      const join = shown && space && shown.id !== tg.id && shown.machine === space.machine;
       return [
         ["Rename", "tab.rename", { id: tg.id }],
         ["New tab", "tab.new", { space: tg.space }],
+        ...(otherSpaces(tg).length ? [["Move to space…", "move-tab", tg]] : []),
+        ...(join
+          ? [
+              ["Move beside current tab", "tab.join", { id: tg.id, direction: "right" }],
+              ["Move below current tab", "tab.join", { id: tg.id, direction: "down" }],
+            ]
+          : []),
         ["Close", "tab.close", { id: tg.id }],
       ];
+    }
+    case "move-tab":
+      return otherSpaces(tg).map((s) => [s.name, "tab.move", { id: tg.id, space: s.id }]);
     case "space":
       return [
         ["Rename", "space.rename", { id: tg.id }],
@@ -79,17 +118,32 @@ function items(p, git) {
   }
 }
 
-function menuIcon(command) {
-  const name = command.endsWith(".close") ? "x" : command.endsWith(".rename") ? "square-pen" : command.endsWith(".new") ? "plus" : command === "worktree" ? "git-branch" : command === "app.help" ? "terminal" : command === "app.theme" ? "settings" : command === "pane.split" ? "panel-right" : command === "pane.zoom" ? "square" : "terminal";
+function menuIcon(command, args) {
+  const down = args?.direction === "down";
+  const name = command.endsWith(".close") ? "x" : command.endsWith(".rename") ? "square-pen" : command.endsWith(".new") ? "plus" : command === "worktree" ? "git-branch" : command === "app.help" ? "terminal" : command === "app.theme" ? "settings"
+    : command === "pane.split" || command === "tab.join" ? (down ? "panel-bottom" : "panel-right") : command === "pane.zoom" ? "square"
+    : command === "move-tab" ? "layers" : command === "tab.move" ? "folder" : command === "pane.move" ? "plus" : "terminal";
   return `mods/workspace-chrome/${name}.svg`;
 }
+
+// A bare key for these doesn't do what their items do (they need a tab or a
+// space a key can't name): only a `name:value` binding stands for the item.
+const NOT_BARE = new Set(["tab.move", "tab.join", "pane.move"]);
 
 // The key bound to a command, for the hint on the right.
 function shortcut(name, args) {
   // `pane.split:right` binds pane.split with { direction: "right" }.
   const value = args && Object.values(args)[0];
-  const k = keys().find((b) => b.section === "global" && (b.action === name || b.action === `${name}:${value}`));
+  const k = keys().find((b) => b.section === "global" && ((b.action === name && !NOT_BARE.has(name)) || b.action === `${name}:${value}`));
   return k ? k.keys : "";
+}
+
+// A line above the first item of these groups.
+function separated(list, i) {
+  const [, c] = list[i];
+  const prev = i > 0 && list[i - 1][1];
+  const moves = (c) => c === "move-tab" || c === "tab.join";
+  return i > 0 && (c.endsWith(".close") || c === "app.help" || (c === "app.theme" && prev !== "app.theme") || (moves(c) && !moves(prev)));
 }
 
 export default class Menu extends View {
@@ -113,6 +167,8 @@ export default class Menu extends View {
     if (!it) return;
     closeOverlay(props()?.overlay);
     if (it[1] === "worktree") openOverlay({ mod: "worktree", kind: "dialog", ...(it[2].action === "open" ? { width: 560, height: 480 } : { width: 440, height: 260 }), props: it[2] });
+    else if (it[1] === "move-tab") openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "move-tab", target: it[2] } });
+    // A refused command (another machine, a busy terminal) shows Herdr's error toast.
     else run(it[1], it[2]);
   }
 
@@ -128,6 +184,7 @@ export default class Menu extends View {
       .bg(t.popover)
       .text_size(12.8)
       .on_key_down((e, cx) => {
+        if (!list.length && e.key !== "escape") return;
         if (e.key === "down") this.at = (this.at + 1) % list.length;
         else if (e.key === "up") this.at = (this.at + list.length - 1) % list.length;
         else if (e.key === "enter") this.choose(this.at, cx);
@@ -138,7 +195,7 @@ export default class Menu extends View {
       .children(
         list.map((it, i) =>
           v_flex()
-            .when(i > 0 && (it[1].endsWith(".close") || it[1] === "app.help" || (it[1] === "app.theme" && list[i - 1][1] !== "app.theme")), el => el.child(div().mx(7).my(4).h(1).bg(t.border)))
+            .when(separated(list, i), el => el.child(div().mx(7).my(4).h(1).bg(t.border)))
             .child(h_flex()
             .id(`mi-${i}`)
             .h(31)
@@ -151,8 +208,9 @@ export default class Menu extends View {
             .when(i === this.at, (el) => el.bg(t.selected))
             .hover((s) => s.bg(t.hover))
             .on_click((_e, cx) => this.choose(i, cx))
-            .child(svg(menuIcon(it[1])).size(14).flex_none().text_color(t.muted))
-            .child(div().flex_1().child(it[0]))
+            .child(svg(menuIcon(it[1], it[2])).size(14).flex_none().text_color(t.muted))
+            // Space names can be long.
+            .child(div().flex_1().min_w(0).truncate().child(it[0]))
             .child(div().text_size(11).text_color(t.dim).child(shortcut(it[1], it[2])))),
         ),
       );
