@@ -120,7 +120,9 @@ the highlighted line shows where it will land.
   split right and down. One nobody named is called by its place (1, 2,
   ...), as in Herdr; `tab.rename` names it ("fix login"). A space
   has one or more; closing the last one closes the space (it stays in
-  `recent`).
+  `recent`). Tabs and panes move between the spaces and tabs of their
+  machine with their terminals running (`tab.move {space}`, `tab.join`,
+  `pane.move`); a tab or space a move leaves empty closes, ending nothing.
 - A tab can be **settled** (`tab.settle`): put away on this screen, still running;
   `settled` on each tab. The shipped layouts don't use it (they list every
   tab); a mod that does can hide or fold settled tabs. Showing one, or an
@@ -143,6 +145,7 @@ the highlighted line shows where it will land.
   Labels use ids local to that machine; remote ids shown by the app have a
   `<machine>/` prefix (strip it when writing labels on that machine). Adoption
   also enables core keep; `terminal.park` removes the pane and disables keep.
+  Moving a pane or tab relabels its terminals in the background and leaves keep as it was.
   When a core change is needed, `terminal.keep` / `terminal.park` acknowledge
   with `pending: true`, then apply after the machine replies; failures show a toast.
   Normal quit waits for pending terminal changes and layout writes; remote waits are bounded.
@@ -586,6 +589,10 @@ The main ones:
   in beside it like any tab), `tab.close {id?, confirmed?}` (closing the last tab
   closes its space and asks first unless confirmed),
   `tab.rename {id?, name}` ("": its number again), `tab.move {id?, index | by}` (by: places left (-) or right (+), skipping settled tabs as `tab.next` does, wrapping),
+  `tab.move {id?, space, index?}` (into another space of its machine, at index, default
+  last, with its name, splits, running terminals, focus and zoom; not with `by`),
+  `tab.join {id, direction: "right" | "down", target?}` (the whole tab, splits intact,
+  beside a pane of another tab, default: the focused one; the tab itself goes),
   `tab.select {index | id}`, `tab.next`, `tab.prev`,
   `tab.settle {id?}`, `tab.unsettle {id?}` (index, next and prev
   skip settled tabs).
@@ -595,9 +602,10 @@ The main ones:
   such tabs go last in their space, in the order made. `focus` is a boolean.
 - Panes: `pane.split {direction: "right" | "down", pane?, argv? | mod?, props?}` (a new
   terminal, or a mod pane), `pane.close {pane?}`,
-  `pane.move {pane?, tab}` or `{pane?, target, edge?}` (into a tab — after its
-  focused pane — or beside a pane in any tab at edge `"left" | "right" | "up" |
-  "down"`, default right; a pane stays on its own machine, its terminal running),
+  `pane.move {pane?, tab | target, edge?}` (into a tab, beside its focused pane, or
+  beside `target`, a pane in any tab; edge `"left" | "right" | "up" | "down"`, default
+  right), `pane.move {pane?, tab: "new", space?}` (out into a new tab of its own, after
+  its tab, or last in `space`),
   `pane.zoom {pane?}`, `pane.focus {pane | terminal}`, `pane.go {direction}`,
   `pane.swap {pane?, direction | target}`.
   `pane.zoom` also makes the pane its tab's focused one (the tab isn't
@@ -610,6 +618,12 @@ The main ones:
   `pane.swap {target}` trades the places of `pane` (default: the focused one) and
   `target`, another pane of the same tab; give `direction` or `target`, not both.
   A swap moves panes, not focus: the focused pane stays focused in its new place.
+  `pane.move`, `tab.move {space}` and `tab.join` keep every terminal running and stay
+  on its machine. The moved pane (a joined tab: its focused pane) is focused in its new
+  tab, which unzooms. The shown tab stays shown (in its new space when it moved); a shown
+  tab the move emptied gives way to where its panes went. In its own tab
+  `pane.move {target}` moves like a drag.
+  They reply at once (`{pane, tab, space}`; `tab.join`: `{tab, pane}`).
   `pane.focus {terminal}` prefers the first visible layout terminal block showing that
   address, then its model pane. Clicking a terminal block focuses it too.
   While a layout terminal block is focused, implicit split/close/zoom/go/swap and

@@ -93,13 +93,24 @@ Rename a tab (asks the person when no name; an empty name: called by its number 
 
 ## `tab.move`
 
-Move a tab (the active one if no id) to a position in its space (1 = first), or `by` places left (-) or right (+), wrapping.
+Move a tab (the active one if no id) to a position in its space (1 = first), or `by` places left (-) or right (+), wrapping. With `space`, into that space (same machine) at index (default: last), with its splits and terminals running; a space left empty closes.
 
 | Argument | Required |
 |---|---|
 | `id` | no |
 | `index` | no |
 | `by` | no |
+| `space` | no |
+
+## `tab.join`
+
+Put a whole tab, splits and running terminals, "right" or "down" of a pane in another tab (target, default: the focused one) on the same machine. The tab itself goes; a space left empty closes.
+
+| Argument | Required |
+|---|---|
+| `id` | yes |
+| `direction` | yes |
+| `target` | no |
 
 ## `pane.split`
 
@@ -123,14 +134,15 @@ Close a pane and end its terminal.
 
 ## `pane.move`
 
-Move a pane (default: the focused one) into another tab, keeping its terminal: `tab` appends after that tab's focused pane, `target` puts it beside a pane in any tab at `edge` ("left", "right", "up", "down"; default right). One of `tab` or `target`.
+Move a pane (default: the focused one), its terminal running, beside `target` (a pane in any tab) or into `tab` (beside its focused pane), at `edge` ("left", "right", "up", "down"; default right); tab "new": out into a new tab of its own, after its tab or last in `space`. Same machine only; a tab or space left empty closes.
 
 | Argument | Required |
 |---|---|
-| `pane` | no |
 | `tab` | no |
+| `pane` | no |
 | `target` | no |
 | `edge` | no |
+| `space` | no |
 
 ## `terminal.open`
 

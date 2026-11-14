@@ -38,10 +38,11 @@ pub const COMMANDS: &[Command] = &[
         "Make a tab in a space (default: the selected one; name default: none, so it's called by its number) with a terminal in folder (default: the focused terminal's), optionally an agent (argv) and its first message (task); or with a mod as its only pane (`mod`, its `props`: a file, a board). It is shown at once; focus false adds it last in its space and keeps the shown space and the target space's selected tab. With no space open, a person's new tab starts a space (as space.new)."),
     cmd("tab.close", &[opt("id"), opt("confirmed")], "Close a tab and end its terminals."),
     cmd("tab.rename", &[opt("id"), opt("name")], "Rename a tab (asks the person when no name; an empty name: called by its number again)."),
-    cmd("tab.move", &[opt("id"), opt("index"), opt("by")], "Move a tab (the active one if no id) to a position in its space (1 = first), or `by` places left (-) or right (+), wrapping."),
+    cmd("tab.move", &[opt("id"), opt("index"), opt("by"), opt("space")], "Move a tab (the active one if no id) to a position in its space (1 = first), or `by` places left (-) or right (+), wrapping. With `space`, into that space (same machine) at index (default: last), with its splits and terminals running; a space left empty closes."),
+    cmd("tab.join", &[req("id"), req("direction"), opt("target")], "Put a whole tab, splits and running terminals, \"right\" or \"down\" of a pane in another tab (target, default: the focused one) on the same machine. The tab itself goes; a space left empty closes."),
     cmd("pane.split", &[req("direction"), opt("pane"), opt("argv"), opt("mod"), opt("props")], "Split a pane (default: the focused one) \"right\" or \"down\" with a new terminal, or with a mod (`mod`, its `props`) beside it."),
     cmd("pane.close", &[opt("pane")], "Close a pane and end its terminal."),
-    cmd("pane.move", &[opt("pane"), opt("tab"), opt("target"), opt("edge")], "Move a pane (default: the focused one) into another tab, keeping its terminal: `tab` appends after that tab's focused pane, `target` puts it beside a pane in any tab at `edge` (\"left\", \"right\", \"up\", \"down\"; default right). One of `tab` or `target`."),
+    cmd("pane.move", &[opt("tab"), opt("pane"), opt("target"), opt("edge"), opt("space")], "Move a pane (default: the focused one), its terminal running, beside `target` (a pane in any tab) or into `tab` (beside its focused pane), at `edge` (\"left\", \"right\", \"up\", \"down\"; default right); tab \"new\": out into a new tab of its own, after its tab or last in `space`. Same machine only; a tab or space left empty closes."),
     cmd("terminal.open", &[opt("argv"), opt("folder"), opt("place"), opt("name")], "Start a terminal: as a new tab (place \"tab\", default), or \"right\"/\"down\" of the focused pane."),
     cmd("terminal.keep", &[req("terminal"), opt("place")], "Give a running terminal without a pane (a sub-agent) a pane: a new tab, or \"right\"/\"down\"."),
     cmd("terminal.park", &[req("terminal")], "Take a terminal's pane away and disable core keep; it keeps running (a sub-agent shows under its parent again)."),
@@ -203,7 +204,8 @@ mod tests {
 
     #[test]
     fn malformed_targets_cannot_fall_back_to_the_current_work() {
-        for (name, arg) in [("tab.close", "id"), ("pane.close", "pane"), ("space.close", "id"), ("tab.new", "space"), ("terminal.show", "terminal"), ("pane.swap", "pane"), ("pane.swap", "target")] {
+        for (name, arg) in [("tab.close", "id"), ("pane.close", "pane"), ("space.close", "id"), ("tab.new", "space"), ("terminal.show", "terminal"), ("pane.swap", "pane"), ("pane.swap", "target"),
+            ("tab.move", "space"), ("tab.join", "id"), ("tab.join", "target"), ("pane.move", "pane"), ("pane.move", "target"), ("pane.move", "space")] {
             let c = find(name).unwrap();
             for value in [json!(123), json!(false), json!([]), json!({"id": "target"})] {
                 let error = validate_args(c, &json!({arg: value})).unwrap_err();
@@ -224,6 +226,8 @@ mod tests {
         assert_eq!(names.len(), COMMANDS.len());
         assert_eq!(shorthand(find("tab.select").unwrap(), "3"), json!({ "index": 3 }));
         assert_eq!(shorthand(find("pane.split").unwrap(), "right"), json!({ "direction": "right" }));
+        // A key can take the focused pane out into a tab of its own.
+        assert_eq!(shorthand(find("pane.move").unwrap(), "new"), json!({ "tab": "new" }));
         let move_ = find("space.move").unwrap();
         assert_eq!(missing(move_, &json!({ "id": " ", "index": 1 })), Some("id"));
         assert_eq!(missing(move_, &json!({ "id": "sp1", "index": 1 })), None);
