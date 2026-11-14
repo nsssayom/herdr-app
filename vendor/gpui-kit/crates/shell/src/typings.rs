@@ -1470,6 +1470,18 @@ const ELEMENT_METHODS: &str = r#"    /**
      * The payload keeps its source machine, and an ordinary click still works.
      */
     drag_paths<Self extends Element>(this: Self, paths: string[], options?: { on?: string | null }): Self;
+    /**
+     * Herdr: a left press here can start dragging `item` (`{ tab: id }` or
+     * `{ pane: id }`); past 4 px the app runs the drag, draws it and acts on
+     * the drop. Clicks without movement still reach the element.
+     */
+    drag_move<Self extends Element>(this: Self, item: { tab: string } | { pane: string }): Self;
+    /**
+     * Herdr: a place to drop a dragged tab or pane: `{ space: id }`,
+     * `{ tab: id }`, or `{ tab: "new", space?: id }`. `drag()` says what is
+     * dragged and what is under the pointer, to style the target.
+     */
+    drop_move<Self extends Element>(this: Self, target: { space: string } | { tab: string; space?: string }): Self;
     /** Files dropped from outside the app, as absolute paths. Use on a plain layout element. */
     on_drop<Self extends Element>(this: Self, handler: (event: { paths: string[] }, cx: Context) => void): Self;
     /**
@@ -4051,6 +4063,8 @@ mod tests {
         "on_mouse_down_out",
         "on_drop",
         "drag_paths",
+        "drag_move",
+        "drop_move",
         "on_scroll_wheel",
         "on_pinch",
         "on_action",

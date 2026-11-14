@@ -1,11 +1,12 @@
 // Workspace spaces: stable colored avatars, worktrees under their checkout,
 // grouped by machine when more than one is known. After a space's name, the repo
 // its first terminal is in now, only where unusual: branch, ahead/behind. Agent state lives in the agents list, not here. Click to
-// switch, right-click for its menu, drag to reorder.
+// switch, right-click for its menu, drag to reorder. A tab or pane dragged from
+// elsewhere drops on a space row (Herdr runs that drag).
 
 import { View, div, svg } from "gpui-kit";
 import { v_flex, h_flex, ScrollHandle } from "gpui-base";
-import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout } from "herdr";
+import { spaces, machines, panes, run, openOverlay, exec, hc, theme, shared, setShared, watchFolder, window, layout, drag } from "herdr";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -60,6 +61,23 @@ export function glyph(status) {
 
 export function tone(t, status) {
   return t[status] ?? t.unknown;
+}
+
+// While Herdr drags a tab or pane: whether a space could take it. A space on another
+// machine never can (terminals stay on their machine), nor a tab's own space.
+export function dropState(d, w) {
+  if (!d) return null;
+  if ((d.machine ?? null) !== (w.machine ?? null)) return "no";
+  if (!d.pane && d.space === w.id) return "no";
+  return d.over?.space === w.id ? (d.valid ? "over" : "refused") : "can";
+}
+
+// How a row shows it: lit under the pointer, faded when it can't take it.
+function dropLook(el, state, t, radius) {
+  if (state === "no") return el.opacity(0.4);
+  if (state === "over") return el.bg(t.selected).child(div().absolute().top(0).bottom(0).left(0).right(0).rounded(radius).border(1).border_color(t.accent));
+  if (state === "refused") return el.opacity(0.4).child(div().absolute().top(0).bottom(0).left(0).right(0).rounded(radius).border(1).border_color(t.blocked));
+  return el;
 }
 
 export default class Spaces extends View {
@@ -461,6 +479,7 @@ export default class Spaces extends View {
 
   row({ w, i, g, tree }, t) {
     const on = w.active;
+    const dropping = dropState(drag(), w);
     const fromIndex = this.pressed === null ? -1 : spaces().findIndex(s => s.id === this.pressed);
     const colors = shared("space.colors") ?? {};
     const color = colors[w.id] ?? "ansi6";
@@ -505,6 +524,8 @@ export default class Spaces extends View {
         cx.notify();
       })
       .on_mouse_down("right", () => this.menu(w))
+      .drop_move({ space: w.id })
+      .when(Boolean(dropping), (el) => dropLook(el, dropping, t, 8))
       .child(
         h_flex()
           .gap(9)
@@ -517,6 +538,7 @@ export default class Spaces extends View {
   }
 
   compact({ w, i }, t) {
+    const dropping = dropState(drag(), w);
     return railCell(h_flex()
       .id(`space-${w.id}`)
       .relative()
@@ -528,6 +550,8 @@ export default class Spaces extends View {
       .when(w.active, (el) => el.bg(t.selected))
       .when(!w.active, (el) => el.hover((s) => s.bg(t.hover)))
       .on_click(() => run("space.select", { id: w.id }))
+      .drop_move({ space: w.id })
+      .when(Boolean(dropping), (el) => dropLook(el, dropping, t, 6))
       .child(div().text_color(w.active ? t.foreground : t.muted).child(String(i + 1)))
       .child(div().absolute().right(5).text_color(tone(t, w.status)).child(glyph(w.status))));
   }

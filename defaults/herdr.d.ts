@@ -270,6 +270,22 @@ export interface TerminalSelectionState {
  *  terminal commands (including a shown replacement or peek). Live. */
 export function focused(): ({ space: string; tab: string; pane: string | null; terminal: string | null; shown: string | null; agent: string | null; cwd: string | null } & TerminalSelectionState) | null;
 
+/** The tab or pane being dragged to move it, once the press has moved 4 px; null otherwise.
+ *  Herdr runs the drag: elements start one with `.drag_move({ tab } | { pane })` and say where it
+ *  can drop with `.drop_move({ space } | { tab } | { tab: "new", space? })`; the shown tab's panes
+ *  are targets too (`over: { pane, edge }`, edge "left" | "right" | "up" | "down", null: swap).
+ *  `tab`: the dragged tab, or the dragged pane's tab; `space` and `machine` (null: this computer)
+ *  are where it is. `over`: the target under the pointer, as its element gave it. `valid`: a
+ *  release there moves it. Nothing moves to another machine. Use it to light your targets. Live. */
+export function drag(): {
+  tab: string;
+  pane?: string;
+  space: string;
+  machine: string | null;
+  over: { space: string } | { tab: string; space?: string } | { pane: string; edge: "left" | "right" | "up" | "down" | null } | null;
+  valid: boolean;
+} | null;
+
 /** The shown layout (layouts/<name>.json). Its name is shared("layout").
  *  Root `terminal_menu?: string` chooses a terminal right-click menu mod (default: "menu").
  *  Unknown names warn and fall back to "menu". This replaces the menu, not its items.

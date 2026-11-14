@@ -13,7 +13,7 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
   const availability = [{ name: null as string | null, layout: "ready" }];
   const moves: { id: string; index: number }[] = [];
   const handlers: Record<string, (...args: any[]) => void> = {};
-  const env = { layout: null as unknown };
+  const env = { layout: null as unknown, drag: null as unknown };
   // The list's scroll position: the requests the view makes are what the sidebar would scroll by.
   const ScrollHandle = { new: () => ({ calls: [] as number[], scroll_to_item(index: number) { this.calls.push(index); } }) };
   const theme = () => new Proxy({}, { get: () => "#000000" });
@@ -23,7 +23,7 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
     if (method === "track_scroll") tracked.push(args[0]);
     return element;
   } });
-  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", `${source}; return Spaces;`)(
+  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", "drag", `${source}; return Spaces;`)(
     class {},
     async (args: string[]) => {
       calls.push(args);
@@ -38,7 +38,7 @@ function harness(replies: unknown[] = [], storage = new Map<string, string>(), s
       moves.push(args);
     },
     ...Array(4).fill(() => element), () => null, () => availability, execGit, () => ({ active: true }), watch,
-    ScrollHandle, theme, () => env.layout, () => {},
+    ScrollHandle, theme, () => env.layout, () => {}, () => env.drag,
   );
   const view = new Spaces();
   view.reconnecting = {};
@@ -571,7 +571,7 @@ function headerHarness(opts: { state?: string; layoutPx?: number; folded?: strin
     run(name: string, args: unknown) { ran.push([name, args]); }, openOverlay(o: unknown) { overlays.push(o); },
     exec: async () => ({ code: 0, stdout: "", stderr: "" }), hc: async () => ({ code: 0, stdout: "{}", stderr: "" }),
     theme: () => new Proxy({}, { get: (_, k) => `#${String(k)}` }), shared: () => null, setShared() {}, watchFolder: () => new Promise(() => {}),
-    window: () => ({ active: true }), layout: () => opts.layoutPx ? { id: "sidebar", size: { px: opts.layoutPx } } : null,
+    window: () => ({ active: true }), layout: () => opts.layoutPx ? { id: "sidebar", size: { px: opts.layoutPx } } : null, drag: () => null,
     localStorage: { setItem(k: string, v: string) { storage.set(k, v); }, getItem: (k: string) => storage.get(k) ?? null },
   };
   const Spaces = new Function(...Object.keys(env), `${source}; return Spaces;`)(...Object.values(env));
@@ -654,4 +654,60 @@ test("the rail keeps its one-button machine cells", () => {
   expect(head.calls.tooltip[0][0]).toBe("vehiclesec · connected");
   h.handler(head, "on_click")({}, h.cx);
   expect([...h.view.folded]).toEqual(["vehiclesec"]);
+});
+
+// A tab or pane Herdr drags drops on a space row; rows say whether they can take it.
+const dropState = new Function("View", "div", `${source}; return dropState;`)(class {}, () => null);
+
+test("a dragged tab can go to another space of its machine, never its own or another machine's", () => {
+  const tab = { tab: "c1", space: "a", machine: null, over: null, valid: false };
+  expect(dropState(null, { id: "b", machine: null })).toBeNull();
+  expect(dropState(tab, { id: "b", machine: null })).toBe("can");
+  expect(dropState(tab, { id: "a", machine: null })).toBe("no");
+  expect(dropState(tab, { id: "far", machine: "vps" })).toBe("no");
+  expect(dropState({ ...tab, over: { space: "b" }, valid: true }, { id: "b", machine: null })).toBe("over");
+  expect(dropState({ ...tab, over: { space: "b" }, valid: false }, { id: "b" })).toBe("refused");
+  // A pane may make a new tab in its own space; a remote tab only on its machine.
+  expect(dropState({ ...tab, pane: "x1" }, { id: "a", machine: null })).toBe("can");
+  expect(dropState({ ...tab, machine: "vps" }, { id: "far", machine: "vps" })).toBe("can");
+  expect(dropState({ ...tab, machine: "vps" }, { id: "b", machine: null })).toBe("no");
+});
+
+test("every space row, full or rail, is a drop target that fades when it can't take the drag", () => {
+  const calls: [string, unknown[]][] = [];
+  // Records each builder call and runs `when` branches, so a row's look is visible.
+  const element: any = new Proxy({}, { get: (_, method) => (...args: any[]) => {
+    calls.push([String(method), args]);
+    if (method === "when" && args[0]) args[1](element);
+    return element;
+  } });
+  const h = harness([], new Map(), [{ id: "a", name: "api", folder: "/a", active: true }, { id: "far", name: "far", folder: "/f", machine: "vps" }] as Space[]);
+  const Spaces = new Function("View", "hc", "localStorage", "spaces", "panes", "run", "v_flex", "h_flex", "div", "svg", "shared", "machines", "exec", "window", "watchFolder", "ScrollHandle", "theme", "layout", "setShared", "drag", `${source}; return Spaces;`)(
+    class {}, async () => ({ code: 0, stdout: "{}", stderr: "" }), { setItem() {}, getItem: () => null },
+    () => h.snapshot, () => [], () => {}, ...Array(4).fill(() => element), () => null, () => [], async () => ({ code: 1, stdout: "", stderr: "" }), () => ({ active: true }), () => new Promise(() => {}),
+    { new: () => ({ scroll_to_item() {} }) }, () => new Proxy({}, { get: (_, k) => String(k) }), () => null, () => {},
+    () => env.drag,
+  );
+  const env = { drag: { tab: "c1", space: "a", machine: null, over: { space: "a" }, valid: false } as unknown };
+  const view = new Spaces();
+  for (const [draw, radius] of [["row", 8], ["compact", 6]] as const) {
+    for (const w of h.snapshot) {
+      calls.length = 0;
+      view[draw]({ w, i: 0, g: null, tree: null }, new Proxy({}, { get: (_, k) => String(k) }));
+      expect(calls.find(([m]) => m === "drop_move")?.[1]).toEqual([{ space: w.id }]);
+      // Its own space (under the pointer) and a space on another machine: neither can take the tab, so both fade.
+      expect(calls.some(([m, a]) => m === "opacity" && a[0] === 0.4)).toBe(true);
+      expect(calls.some(([m, a]) => m === "border_color" && a[0] === "accent")).toBe(false);
+      expect(calls.some(([m, a]) => m === "rounded" && a[0] === radius)).toBe(true);
+    }
+    // Another space of its machine under the pointer: lit.
+    h.snapshot.push({ id: "b", name: "web", folder: "/b" });
+    env.drag = { tab: "c1", space: "a", machine: null, over: { space: "b" }, valid: true };
+    calls.length = 0;
+    view[draw]({ w: h.snapshot[2], i: 2, g: null, tree: null }, new Proxy({}, { get: (_, k) => String(k) }));
+    expect(calls.some(([m, a]) => m === "border_color" && a[0] === "accent")).toBe(true);
+    expect(calls.some(([m]) => m === "opacity")).toBe(false);
+    h.snapshot.pop();
+    env.drag = { tab: "c1", space: "a", machine: null, over: { space: "a" }, valid: false };
+  }
 });

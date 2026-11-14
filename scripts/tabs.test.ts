@@ -29,7 +29,7 @@ const values: Record<string, unknown> = {
   spaces: () => [{ id: "s1", active: true, tabs: [{ id: "t1", name: "a" }, { id: "t2", name: "b", active: true }, { id: "t3", name: "c" }] }],
   panes: () => [], focused: () => null, run(command: string) { commands.push(command); }, exec: async () => ({ code: 0, stdout: "", stderr: "" }),
   home: () => "/home/me", notify() {}, openOverlay() {}, theme: () => ({}),
-  window: () => null, shared: () => null, layout: () => null, settings: () => ({ zoom: 1 }),
+  window: () => null, shared: () => null, layout: () => null, settings: () => ({ zoom: 1 }), drag: () => null,
   localStorage: { getItem: (key: string) => store[key] ?? null, setItem(key: string, value: string) { store[key] = value; } },
 };
 const Tabs = new Function(...Object.keys(values), source.replace(/^import .*;\n/gm, "").replace(/^export (?!default)/gm, "").replace("export default class Tabs", "return class Tabs"))(...Object.values(values));
@@ -158,7 +158,7 @@ function editorBar(opts: { platform?: string; editor?: unknown; machine?: string
     openOverlay(o: Record<string, unknown>) { overlays.push(o); return "o1"; },
     theme: () => ({}), window: () => ({ platform: opts.platform ?? "macos", buttons: false }),
     shared: (key: string) => key === "workspace.editor" ? opts.editor ?? null : key === "workspace.panels" ? ["files"] : null,
-    layout: () => null, settings: () => ({ zoom: 1 }),
+    layout: () => null, settings: () => ({ zoom: 1 }), drag: () => null,
     localStorage: { getItem: () => null, setItem() {} },
   };
   const body = `${source.replace(/^import .*;\n/gm, "").replace(/^export (?!default)/gm, "").replace("export default class Tabs", "class Tabs")}; return { Tabs, editorArgv, workFolder, installedEditors, EDITORS };`;
@@ -334,4 +334,70 @@ test("a typed command becomes argv without a shell, quotes keeping spaces", () =
   empty.view.save();
   expect(empty.view.error).toBeTruthy();
   expect(empty.closed).toEqual([]);
+});
+
+// Dragging: Herdr runs the drag; the bar marks what can be dragged and where it can drop.
+function dragBar(drag: unknown = null) {
+  const ran: [string, unknown][] = [];
+  const env: Record<string, unknown> = {
+    ...values, run(command: string, args: unknown) { ran.push([command, args]); }, drag: () => drag,
+    spaces: () => [{ id: "s1", active: true, tabs: [{ id: "t1", name: "a" }, { id: "t2", name: "b", active: true }, { id: "t3", name: "c" }] }],
+    theme: () => new Proxy({}, { get: (_, k) => String(k) }),
+  };
+  const mod = new Function(...Object.keys(env), source.replace(/^import .*;\n/gm, "").replace(/^export (?!default)/gm, "").replace("export default class Tabs", "return class Tabs"))(...Object.values(env));
+  const view = new mod();
+  view.init();
+  const root = view.render() as Element;
+  const find = (el: Element, id: string): Element | undefined => typeof el !== "object" ? undefined : el.calls.id?.[0] === id ? el : el.nodes.map(n => find(n, id)).find(Boolean);
+  return { root, ran, view, find: (id: string) => find(root, id)! };
+}
+const cx = { stop_propagation() {}, notify() {} };
+
+test("tabs are drag sources and targets; the bar's end and + make a new tab", () => {
+  const bar = dragBar();
+  for (const id of ["t1", "t2", "t3"]) {
+    expect(bar.find(`tab-${id}`).calls.drag_move).toEqual([{ tab: id }]);
+    expect(bar.find(`tab-${id}`).calls.drop_move).toEqual([{ tab: id }]);
+  }
+  expect(bar.find("tab-scroll").calls.drop_move).toEqual([{ tab: "new" }]);
+  expect(bar.find("tab-new").calls.drop_move).toEqual([{ tab: "new" }]);
+});
+
+test("a click selects; a press released on another tab without a drag moves nothing", () => {
+  const bar = dragBar();
+  const down = (id: string) => (bar.find(`tab-${id}`).calls.on_mouse_down as any[]);
+  const up = (id: string) => (bar.find(`tab-${id}`).calls.on_mouse_up[1] as Function)({}, cx);
+  // on_mouse_down's last registration is the right-click menu: press through the view's own state.
+  expect(down("t1")[0]).toBe("right");
+  bar.view.pressed = 0;
+  up("t1");
+  expect(bar.ran).toEqual([["tab.select", { id: "t1" }]]);
+  bar.ran.length = 0;
+  // Herdr took the drag past 4 px and runs the move itself: the bar adds no second one.
+  bar.view.pressed = 0;
+  up("t3");
+  expect(bar.ran).toEqual([]);
+});
+
+test("a dragged tab fades and the tab it's over shows the side it lands on", () => {
+  const right = dragBar({ tab: "t1", space: "s1", machine: null, over: { tab: "t3" }, valid: true });
+  expect(right.find("tab-t1").calls.opacity).toEqual([0.5]);
+  const line = right.find("tab-t3").nodes.find(n => typeof n === "object" && n.calls.w?.[0] === 2)!;
+  expect(line.calls.right).toEqual([-3]);
+  const left = dragBar({ tab: "t3", space: "s1", machine: null, over: { tab: "t1" }, valid: true });
+  expect(left.find("tab-t1").nodes.find(n => typeof n === "object" && n.calls.w?.[0] === 2)!.calls.left).toEqual([-3]);
+  // Not a place it can go: nothing lit.
+  const refused = dragBar({ tab: "t1", space: "s1", machine: null, over: { tab: "t3" }, valid: false });
+  expect(refused.find("tab-t3").nodes.some(n => typeof n === "object" && n.calls.w?.[0] === 2)).toBe(false);
+});
+
+test("a pane over a tab lights it; over the bar's end a New tab slot appears", () => {
+  const into = dragBar({ pane: "p4", tab: "t2", space: "s1", machine: null, over: { tab: "t3" }, valid: true });
+  expect(into.find("tab-t3").calls.border_color).toEqual(["accent"]);
+  expect(into.find("tab-t2").calls.opacity).toBeUndefined();
+  const out = dragBar({ pane: "p4", tab: "t2", space: "s1", machine: null, over: { tab: "new" }, valid: true });
+  expect(text(out.find("tab-drop-new"))).toBe("New tab");
+  expect(out.find("tab-new").calls.bg).toEqual(["selected"]);
+  expect(dragBar({ pane: "p4", tab: "t2", space: "s1", machine: null, over: { tab: "new" }, valid: false }).find("tab-drop-new")).toBeUndefined();
+  expect(dragBar().find("tab-drop-new")).toBeUndefined();
 });

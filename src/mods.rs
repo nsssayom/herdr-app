@@ -585,12 +585,14 @@ pub struct Snapshot {
     pub floats: Value,
     /// { platform, titlebar, buttons, maximized, fullscreen, active }.
     pub window: Value,
+    /// The tab or pane being dragged and what's under the pointer; null when none.
+    pub drag: Value,
 }
 
 impl Default for Snapshot {
     /// Lists start empty, never null, so mods can map over them right away.
     fn default() -> Self {
-        Snapshot { layout: Value::Null, spaces: json!([]), machines: json!([]), agents: json!([]), panes: json!([]), terminals: json!([]), focused: Value::Null, floats: json!({}), window: Value::Null }
+        Snapshot { layout: Value::Null, spaces: json!([]), machines: json!([]), agents: json!([]), panes: json!([]), terminals: json!([]), focused: Value::Null, floats: json!({}), window: Value::Null, drag: Value::Null }
     }
 }
 
@@ -674,6 +676,9 @@ pub fn terminal_address(word: &str, source: &str) -> Option<String> {
 
 pub fn publish_floats(v: Value) -> bool {
     publish("floats", |s| (std::mem::replace(&mut s.floats, v.clone()), v))
+}
+pub fn publish_drag(v: Value) -> bool {
+    publish("drag", |s| (std::mem::replace(&mut s.drag, v.clone()), v))
 }
 pub fn publish_window(v: Value) -> bool {
     publish("window", |s| (std::mem::replace(&mut s.window, v.clone()), v))
@@ -1142,6 +1147,7 @@ fn module(inst: Instance, copy: u64) -> HostModule {
         })
         .function("terminals", reader(reads.clone(), "terminals", |s| &s.terminals))
         .function("focused", reader(reads.clone(), "focused", |s| &s.focused))
+        .function("drag", reader(reads.clone(), "drag", |s| &s.drag))
         .function("layout", reader(reads.clone(), "layout", |s| &s.layout))
         .function("layouts", |_| Ok(to_host(&json!(crate::window::layout_names()))))
         .function("commands", |_| {

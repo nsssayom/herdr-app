@@ -7,6 +7,7 @@
 use crate::hc::Core;
 mod floats;
 mod movable;
+mod move_drag;
 mod pane_drag;
 mod pane_size;
 mod titlebar;
@@ -403,7 +404,8 @@ pub struct AppWindow {
     /// looked at in place of its parent. Not saved; the pane keeps its own.
     swapped: HashMap<String, String>,
     float_drag: Option<floats::FloatDrag>,
-    pane_drag: Option<pane_drag::PaneDrag>,
+    /// A tab or pane pressed to drag (`move_drag`).
+    move_drag: Option<move_drag::MoveDrag>,
     pane_grip_hover: Option<String>,
     /// Each pane's top row the grip sits centered in: its top header, else a strip.
     pane_grip_rows: RefCell<HashMap<String, f32>>,
@@ -531,7 +533,7 @@ impl AppWindow {
             agent_focused: None,
             swapped: HashMap::new(),
             float_drag: None,
-            pane_drag: None,
+            move_drag: None,
             pane_grip_hover: None,
             pane_grip_rows: RefCell::default(),
             win_drag: None,
@@ -605,6 +607,7 @@ impl AppWindow {
             place_write: None,
         };
         w._focus_lost = Some(cx.on_focus_lost(window, |this, window, cx| this.restore_focus(window, cx)));
+        gpui_shell::move_drag::set_host(Rc::new(move_drag::Host(cx.entity().downgrade())));
         w._place = Some(cx.observe_window_bounds(window, |this, window, cx| {
             if let Some(t) = crate::place::changed(window, cx) {
                 this.place_write = Some(t);
@@ -1070,7 +1073,7 @@ impl AppWindow {
         };
         self.save();
         self.float_drag = None;
-        self.pane_drag = None;
+        self.cancel_move_drag(cx);
         self.float_anims.clear();
         self.float_reveal.clear();
         self.float_hover.clear();
@@ -2816,10 +2819,10 @@ impl AppWindow {
     }
 
     /// `tab.join`: a whole tab becomes a split beside `target`, terminals running.
-    fn join_tab(&mut self, id: &str, target: &str, axis: Axis, window: &mut Window, cx: &mut Context<Self>) -> Result<Value, String> {
+    fn join_tab(&mut self, id: &str, target: &str, edge: Edge, window: &mut Window, cx: &mut Context<Self>) -> Result<Value, String> {
         let addresses = self.model.tab(id).map(|c| model::addresses(&c.root)).ok_or_else(|| format!("no tab {id:?}"))?;
         self.can_move(&addresses, Some(id))?;
-        self.model.join_tab(id, target, axis)?;
+        self.model.join_tab(id, target, edge)?;
         self.relabel(addresses, window, cx);
         let tab = self.model.tab_of(target).map(|c| (c.id.clone(), c.focused.clone()));
         Ok(json!({ "tab": tab.as_ref().map(|t| &t.0), "pane": tab.and_then(|t| t.1) }))
@@ -3206,7 +3209,9 @@ impl AppWindow {
                         },
                     };
                     let r = self.move_tab_to_space(&id, &space, index, window, cx);
-                    return self.answer(r);
+                    // Shown at once, like every other move.
+                    self.answer(r);
+                    return self.sync(window, cx);
                 }
                 let moved = match (a.get("index").and_then(Value::as_u64), a.get("by").and_then(Value::as_i64)) {
                     (Some(i), None) => self.model.move_tab(&id, i as usize),
@@ -3216,14 +3221,17 @@ impl AppWindow {
                 if !moved { return self.fail(format!("no tab {id:?}")); }
             }
             "tab.join" => {
-                let axis = match Self::arg(a, "direction") {
-                    Some("right") => Axis::Row,
-                    Some("down") => Axis::Column,
-                    other => return self.fail(format!("tab.join direction is \"right\" or \"down\", not {other:?}")),
+                // The words pane.move's edge uses; right and down were first.
+                let edge = match Self::arg(a, "direction") {
+                    Some("right") => Edge::Right,
+                    Some("down") => Edge::Bottom,
+                    Some("left") => Edge::Left,
+                    Some("up") => Edge::Top,
+                    other => return self.fail(format!("tab.join direction is \"left\", \"right\", \"up\" or \"down\", not {other:?}")),
                 };
                 let Some(id) = Self::owned(a, "id") else { return self.fail("tab.join needs id") };
                 let Some(target) = Self::owned(a, "target").or_else(|| self.model.focused_pane()) else { return self.fail("no pane to join the tab beside") };
-                let r = self.join_tab(&id, &target, axis, window, cx);
+                let r = self.join_tab(&id, &target, edge, window, cx);
                 self.answer(r);
             }
             "tab.settle" | "tab.unsettle" => {
@@ -5340,7 +5348,7 @@ impl Render for AppWindow {
         let overlays = self.render_overlays(window.viewport_size(), cx);
         let tracker = self.float_tracker(cx);
         let win_tracker = self.window_tracker(cx);
-        let pane_drag = self.pane_drag_layer(cx);
+        let move_drag = self.drag_layer(cx);
         div()
             .id("herdr")
             .track_focus(&self.focus)
@@ -5389,8 +5397,8 @@ impl Render for AppWindow {
             }))
             .capture_key_down(cx.listener(|this, ev: &KeyDownEvent, window, cx| {
                 if ev.keystroke.key == "escape" {
-                    if this.pane_drag.is_some() {
-                        this.cancel_pane_drag(cx);
+                    if this.move_drag.is_some() {
+                        this.cancel_move_drag(cx);
                         cx.stop_propagation();
                     } else if cx.stop_active_drag(window) {
                         cx.stop_propagation();
@@ -5425,7 +5433,7 @@ impl Render for AppWindow {
             .children(overlays)
             .children(tracker)
             .children(win_tracker)
-            .child(pane_drag)
+            .child(move_drag)
             .child(crate::bench::frame_end())
     }
 }
@@ -7046,6 +7054,7 @@ export default class Probe extends View {
     }
 
     include!("window/drag_tests.rs");
+    include!("window/move_drag_tests.rs");
 
     /// The whole path, in a real window: a layout names the toast mod, a
     /// notification opens it with its props, and it can close itself (as one
@@ -7529,7 +7538,7 @@ export default class SystemToast extends View {
             refused(this, "tab.join", &[
                 // Into itself (the default target is the focused pane, in c1).
                 json!({"id": "c1", "direction": "right"}),
-                json!({"id": "c1", "direction": "left", "target": "x3"}),
+                json!({"id": "c2", "direction": "sideways", "target": "x3"}),
                 json!({"id": "c1", "target": "x3"}),
                 json!({"id": "missing", "direction": "right", "target": "x3"}),
                 json!({"id": "c1", "direction": "right", "target": "c3"}),

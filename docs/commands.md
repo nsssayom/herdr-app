@@ -104,7 +104,7 @@ Move a tab (the active one if no id) to a position in its space (1 = first), or 
 
 ## `tab.join`
 
-Put a whole tab, splits and running terminals, "right" or "down" of a pane in another tab (target, default: the focused one) on the same machine. The tab itself goes; a space left empty closes.
+Put a whole tab, splits and running terminals, "left", "right", "up" or "down" of a pane in another tab (target, default: the focused one) on the same machine. The tab itself goes; a space left empty closes.
 
 | Argument | Required |
 |---|---|

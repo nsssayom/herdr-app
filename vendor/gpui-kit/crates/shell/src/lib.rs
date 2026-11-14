@@ -74,6 +74,8 @@ pub(crate) mod dependencies;
 pub mod dock;
 mod drag_paths;
 pub use drag_paths::DraggedPaths;
+// HERDR: drags the host runs (a tab, a pane) and where they drop.
+pub mod move_drag;
 pub(crate) mod engine;
 pub(crate) mod entities;
 pub(crate) mod error;

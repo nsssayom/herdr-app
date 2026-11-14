@@ -1,6 +1,6 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
-import { spaces, panes, focused, run, exec, home, notify, openOverlay, theme, window, shared, layout, settings } from "herdr";
+import { spaces, panes, focused, run, exec, home, notify, openOverlay, theme, window, shared, layout, settings, drag } from "herdr";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -176,22 +176,35 @@ export default class Tabs extends View {
       if (active >= 0) this.scroll.scroll_to_item(active);
     }
     const stop = (_e, cx) => cx.stop_propagation();
+    // A tab or pane being dragged (Herdr runs the drag and the drop): light the place it would go.
+    const d = drag();
+    const dragged = d && !d.pane ? d.tab : null;
+    const overNew = d?.over?.tab === "new" && !d.over.space;
     const button = (id, label, action) => div().id(id).size(26).flex_none().flex().items_center().justify_center().rounded(6).text_color(t.dim).hover(s => s.bg(t.hover).text_color(t.foreground))
       .on_mouse_down("left", stop).on_click(action).child(label);
     const item = (c, i) => {
       const lead = panes().find(p => p.tab === c.id && p.program?.agent) ?? panes().find(p => p.tab === c.id);
       const program = lead?.program;
       const name = label(c, lead);
-      return h_flex().id(`tab-${c.id}`).h(29).px(10).gap(7).rounded(7).items_center().flex_none().text_size(12.8)
+      const over = d?.over?.tab === c.id && !d.over.space && d.valid;
+      const from = dragged ? shown.findIndex(x => x.id === dragged) : -1;
+      return h_flex().id(`tab-${c.id}`).relative().h(29).px(10).gap(7).rounded(7).items_center().flex_none().text_size(12.8)
         // A rename or status dot on this or an earlier tab can push the active one out.
         .when(i <= active, el => el.on_size_change((_size, cx) => { this.scroll.scroll_to_item(active); cx.notify(); }))
         .border(1).border_color(c.active ? t.border : t.chrome).bg(c.active ? t.raised : t.chrome).text_color(c.active ? t.foreground : t.muted)
         .hover(s => s.bg(t.hover))
+        // Dragged past 4 px it's Herdr's: onto another tab (there), a space, or the panes (a split).
+        .drag_move({ tab: c.id }).drop_move({ tab: c.id })
+        .when(dragged === c.id, el => el.opacity(0.5))
+        // A tab dropped here takes this one's place: the line shows which side it lands.
+        .when(over && dragged && from !== i, el => el.child(div().absolute().top(4).bottom(4).w(2).rounded(1).bg(t.accent)
+          .when(from < i, line => line.right(-3)).when(from > i, line => line.left(-3))))
+        // A pane dropped here goes into this tab (held a moment, the tab shows).
+        .when(over && Boolean(d.pane), el => el.border_color(t.accent).bg(t.selected))
         .on_mouse_down("left", (e, cx) => { cx.stop_propagation(); this.pressed = i; if (e.click_count === 2) run("tab.rename", { id: c.id }); })
         .on_mouse_up("left", () => {
           const from = this.pressed; this.pressed = null;
-          if (from !== null && from !== i) run("tab.move", { id: shown[from].id, index: space.tabs.findIndex(x => x.id === c.id) + 1 });
-          else run("tab.select", { id: c.id });
+          if (from === i) run("tab.select", { id: c.id });
         })
         .on_mouse_down("right", (_e, cx) => { cx.stop_propagation(); openOverlay({ mod: "menu", kind: "popup", width: 200, props: { tab: "tab", target: { id: c.id, space: space.id } } }); })
         .when(Boolean(program?.icon), el => el.child(program.tint ? svg(program.icon).size(14).text_color(t.muted) : image(program.icon).size(14)))
@@ -244,8 +257,16 @@ export default class Tabs extends View {
       .on_scroll_wheel(e => this.wheel(e))
       .child(h_flex().id("tab-scroll").flex_1().min_w(0).h_full().items_center().gap(3).overflow_x_scrollbar().track_scroll(this.scroll)
         .on_size_change((_size, cx) => { if (active >= 0) { this.scroll.scroll_to_item(active); cx.notify(); } })
-        .children(shown.map(item)))
-      .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })))
+        .drop_move({ tab: "new" })
+        .children(shown.map(item))
+        // The bar's empty end: a pane goes out into a new tab, a tab goes last.
+        .when(overNew && d.valid, el => el.child(d.pane
+          ? h_flex().id("tab-drop-new").h(29).px(10).gap(6).rounded(7).items_center().flex_none().text_size(12.8)
+            .border(1).border_color(t.accent).bg(t.selected).text_color(t.foreground)
+            .child(svg("mods/workspace-chrome/plus.svg").size(12)).child("New tab")
+          : div().w(2).h(21).rounded(1).flex_none().bg(t.accent))))
+      .child(button("tab-new", "+", () => openOverlay({ mod: "new-menu", kind: "popup", width: 250, height: 512 })).drop_move({ tab: "new" })
+        .when(overNew && d.valid, el => el.bg(t.selected).text_color(t.foreground)))
       .when(enabled.includes("files"), el => el.child(panelButton("files", "Files", "mods/files/file.svg")))
       .when(enabled.includes("changes"), el => el.child(panelButton("changes", "Changes", "mods/changes/changes.svg")))
       .when(Boolean(space), el => el.child(editorButton()))

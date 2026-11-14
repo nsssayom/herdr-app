@@ -90,8 +90,11 @@ Moves keep every terminal running and its keep setting, on its own machine.
 focused pane) or beside `target`, a pane in any tab; `edge` is left, right (default),
 up or down. `tab: "new"` takes it out into a tab of its own (`space`: in that space).
 `tab.move {id?, space, index?}` moves a whole tab to another space (default: last).
-`tab.join {id, direction, target?}` puts a whole tab "right" or "down" of a pane of
-another tab; the tab itself goes. A tab or space a move empties closes:
+`tab.join {id, direction, target?}` puts a whole tab "left", "right", "up" or "down"
+of a pane of another tab (the words `pane.move` uses for edge); the tab itself goes.
+A tab or space a move empties closes. People do the same by dragging: a tab onto a
+space or into the shown tab's panes, a pane by its grip onto a tab, the tab bar's
+empty end, or a space:
 
 ```sh
 herdr-app do pane.move '{"pane":"p12","tab":"new"}'

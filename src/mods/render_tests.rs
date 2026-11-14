@@ -158,7 +158,7 @@ fn fixture(populated: bool, props: Value, update: Value) -> BTreeMap<String, Val
         ("updates".into(), update),
         ("telemetry".into(), json!({"enabled":true,"setting":true,"sends":true,"off_because":null,"endpoint":"https://invalid.example", "draft":{},"queued":[],"last_sent":null})),
         ("window".into(), json!({"platform":"linux","titlebar":"none","buttons":true,"maximized":false,"fullscreen":false,"active":true})),
-        ("placement".into(), Value::Null),
+        ("placement".into(), Value::Null), ("drag".into(), Value::Null),
         ("home".into(), json!("/fixture")), ("appHome".into(), json!("/fixture/app")),
         ("keys".into(), Value::Array(serde_json::from_str::<BTreeMap<String, BTreeMap<String, String>>>(include_str!("../../defaults/keys.json")).unwrap().into_iter().flat_map(|(section, bindings)| bindings.into_iter().map(move |(keys, action)| json!({"section":section,"keys":keys,"action":action}))).collect())),
         ("commands".into(), Value::Array(crate::commands::COMMANDS.iter().map(|c| json!({"name":c.name,"about":c.about,"args":c.args.iter().map(|a| json!({"name":a.name,"required":a.required})).collect::<Vec<_>>()})).collect())),
@@ -1240,4 +1240,32 @@ fn status_bar_shows_the_real_palette_key(cx: &mut TestAppContext) {
     let tree = describe_with_values(cx, &staged, "mods/workspace-status", unbound, None).unwrap();
     assert!(tree.contains("commands"), "unbound hint still offers commands: {tree}");
     assert!(!tree.contains("Shift P"), "unbound hint must not invent a key: {tree}");
+}
+
+#[gpui::test]
+fn shipped_bars_mark_drag_sources_and_targets(cx: &mut TestAppContext) {
+    cx.update(gpui_shell::init);
+    let staged = Staged::new();
+    let line = |tree: &str, id: &str| tree.lines().find(|l| l.contains(&format!(":id[Str({id:?})]"))).unwrap_or_else(|| panic!("no {id}:\n{tree}")).to_owned();
+    // Nothing dragged: every row and tab is a target, tabs are sources, nothing fades.
+    let values = fixture(true, props(), updates("current", "current"));
+    let spaces = describe_with_values(cx, &staged, "mods/spaces", values.clone(), None).unwrap();
+    for id in ["s1", "s2"] {
+        let row = line(&spaces, &format!("space-{id}"));
+        assert!(row.contains(&format!(r#":drop_move[Str("{{\"space\":\"{id}\"}}")]"#)), "{row}");
+        assert!(!row.contains(".opacity"), "{row}");
+    }
+    let tabs = describe_with_values(cx, &staged, "mods/tabs", values.clone(), None).unwrap();
+    let tab = line(&tabs, "tab-tab1");
+    assert!(tab.contains(":drag_move[") && tab.contains(":drop_move["), "{tab}");
+    assert!(line(&tabs, "tab-scroll").contains(r#":drop_move[Str("{\"tab\":\"new\"}")]"#));
+    assert!(line(&tabs, "tab-new").contains(r#":drop_move[Str("{\"tab\":\"new\"}")]"#));
+    // The local tab dragged over the remote space: its own space and the other machine's both fade; it fades in the bar.
+    let mut values = values;
+    values.insert("drag".into(), json!({"tab": "tab1", "space": "s1", "machine": null, "over": {"space": "s2"}, "valid": false}));
+    let spaces = describe_with_values(cx, &staged, "mods/spaces", values.clone(), None).unwrap();
+    for id in ["s1", "s2"] {
+        assert!(line(&spaces, &format!("space-{id}")).contains(".opacity[Number(0.4)]"), "{id}");
+    }
+    assert!(line(&describe_with_values(cx, &staged, "mods/tabs", values, None).unwrap(), "tab-tab1").contains(".opacity[Number(0.5)]"));
 }

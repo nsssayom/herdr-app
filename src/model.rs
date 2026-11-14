@@ -400,7 +400,7 @@ impl Model {
 
     /// Whether two nodes (spaces, tabs, panes) live on the same machine: their
     /// terminals can't change machines, and each machine keeps its own layout.
-    fn same_machine(&self, a: &str, b: &str) -> bool {
+    pub(crate) fn same_machine(&self, a: &str, b: &str) -> bool {
         let machine = |id: &str| self.space(id).or_else(|| self.space_of(id)).map(|s| s.machine.as_deref());
         machine(a) == machine(b)
     }
@@ -549,11 +549,11 @@ impl Model {
     }
 
     /// Puts a whole tab beside `target`, a pane of another tab on its machine
-    /// (`axis`: right of it or below), its arrangement intact. The tab is gone
+    /// (at `edge` of it), its arrangement intact. The tab is gone
     /// afterwards; its panes and terminals live on in the target's tab, its
     /// focused pane focused there, and that tab unzooms. A space it leaves
     /// empty closes. What's shown stays (`show_after_move`).
-    pub fn join_tab(&mut self, id: &str, target: &str, axis: Axis) -> Result<(), String> {
+    pub fn join_tab(&mut self, id: &str, target: &str, edge: Edge) -> Result<(), String> {
         let Some(tab) = self.tab(id) else { return Err(format!("no tab {id:?}")) };
         if tab.root.find(target).is_some() {
             return Err(format!("tab {id:?} cannot join itself: target {target:?} is in it"));
@@ -584,7 +584,7 @@ impl Model {
         let to = self.tab_of(target).unwrap();
         let (mut root, to) = (to.root.clone(), to.id.clone());
         let wrapper = self.fresh_id_on("s", machine.as_deref());
-        if !root.split(target, axis, node, wrapper) {
+        if !place(&mut root, target, node, edge, wrapper) {
             return Err(format!("cannot join tab {id:?} there"));
         }
         let shown = self.active_tab().map(|c| c.id.clone());
@@ -1369,7 +1369,7 @@ mod tests {
         m.select_tab("c1");
         let was = shown(&m);
         // c2 (x2 over x3) goes right of x4, as one column.
-        assert_eq!(m.join_tab("c2", "x4", Axis::Row), Ok(()));
+        assert_eq!(m.join_tab("c2", "x4", Edge::Right), Ok(()));
         assert!(m.tab("c2").is_none());
         assert!(m.tabs().all(|c| c.root.walk().iter().all(|n| n.id != "c2")), "the tab's id lives on nowhere");
         let c = m.tab("c4").unwrap();
@@ -1386,13 +1386,28 @@ mod tests {
         // A one-pane tab joins as that pane; down is a column. The shown tab
         // joining (its space's last) shows where it went.
         m.add_space("p3", "x", "/x", Tab::new("c5", "", "x6", "t6"));
-        assert_eq!(m.join_tab("c5", "x4", Axis::Column), Ok(()));
+        assert_eq!(m.join_tab("c5", "x4", Edge::Bottom), Ok(()));
         assert!(m.space("p3").is_none());
         let c = m.tab("c4").unwrap();
         assert_eq!(c.root.parent_of("x6").unwrap().axis(), Some(Axis::Column));
         assert_eq!(c.root.parent_of("x6").unwrap().children().iter().map(|n| n.id.as_str()).collect::<Vec<_>>(), ["x4", "x6"]);
         assert_eq!(shown(&m), (Some("p2".into()), Some("c4".into())));
         assert_eq!(m.focused_pane().as_deref(), Some("x6"));
+        // Left and up put it before the pane: a whole tab (x7 | x8) left of x4, then one above x6.
+        m.add_tab("p2", Tab::new("c6", "", "x7", "t7"));
+        m.split("x7", Axis::Row, "x8", "t8");
+        assert_eq!(m.join_tab("c6", "x4", Edge::Left), Ok(()));
+        let c = m.tab("c4").unwrap();
+        let x4 = c.root.parent_of("x4").unwrap();
+        assert_eq!((x4.axis(), x4.children().iter().map(|n| n.id.as_str()).collect::<Vec<_>>()), (Some(Axis::Row), vec![c.root.parent_of("x7").unwrap().id.as_str(), "x4"]));
+        assert_eq!(c.root.parent_of("x7").unwrap().children().iter().map(|n| n.id.as_str()).collect::<Vec<_>>(), ["x7", "x8"]);
+        m.add_tab("p2", Tab::new("c7", "", "x9", "t9"));
+        assert_eq!(m.join_tab("c7", "x6", Edge::Top), Ok(()));
+        let c = m.tab("c4").unwrap();
+        let column = c.root.parent_of("x9").unwrap();
+        assert_eq!(column.axis(), Some(Axis::Column));
+        let order: Vec<&str> = column.children().iter().map(|n| n.id.as_str()).collect();
+        assert!(order.iter().position(|id| *id == "x9") < order.iter().position(|id| *id == "x6"), "{order:?}");
     }
 
     #[test]
@@ -1415,7 +1430,7 @@ mod tests {
             ("c1", "vps/x3", "A tab must stay on its own machine."),
             ("c5", "x2", "tab \"c5\" has parts this Herdr doesn't know; update Herdr to join it"),
         ] {
-            assert_eq!(m.join_tab(id, target, Axis::Row), Err(error.into()), "{id} -> {target}");
+            assert_eq!(m.join_tab(id, target, Edge::Right), Err(error.into()), "{id} -> {target}");
             assert_eq!(format!("{:?} {:?}", m.spaces, shown(&m)), before);
         }
     }

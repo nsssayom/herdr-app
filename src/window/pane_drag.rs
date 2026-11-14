@@ -1,17 +1,10 @@
-//! App-owned pane grips and drag gestures, independent of header mods.
+//! App-owned pane grips, independent of header mods, and their drop zones
+//! (the drag itself is `move_drag`).
 use super::*;
 use crate::layout::Edge;
 
-pub(super) struct PaneDrag {
-    pane: String,
-    tab: String,
-    down: Point<Pixels>,
-    moving: bool,
-    target: Option<(String, Option<Edge>)>,
-}
-
 /// The outer quarter of a pane chooses its nearest edge; the middle swaps.
-fn drop_zone(bounds: Bounds<Pixels>, at: Point<Pixels>) -> Option<Option<Edge>> {
+pub(super) fn drop_zone(bounds: Bounds<Pixels>, at: Point<Pixels>) -> Option<Option<Edge>> {
     if !bounds.contains(&at) || bounds.size.width <= px(0.) || bounds.size.height <= px(0.) {
         return None;
     }
@@ -50,7 +43,7 @@ impl AppWindow {
         let row = header.unwrap_or(STRIP).max(STRIP);
         self.pane_grip_rows.borrow_mut().insert(pane.to_owned(), row);
         if !self.pane_movable(pane) { return None; }
-        let dragging = self.pane_drag.as_ref().is_some_and(|d| d.pane == pane);
+        let dragging = self.dragging_pane(pane);
         if self.pane_grip_hover.as_deref() != Some(pane) && !dragging { return None; }
         let pane = pane.to_owned();
         Some(div().id(SharedString::from(format!("grip-{pane}")))
@@ -62,7 +55,7 @@ impl AppWindow {
             .group("pane-grip")
             .cursor(if dragging { CursorStyle::ClosedHand } else { CursorStyle::OpenHand })
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, ev: &MouseDownEvent, _, cx| {
-                this.pane_press(&pane, ev.position, cx);
+                this.grip_press(&pane, ev.position, cx);
                 cx.stop_propagation();
             }))
             .children((0..2).map(|_| div().flex().gap(settings::z(3.)).children((0..3).map(|_| div().size(settings::z(2.)).rounded_full()
@@ -71,7 +64,7 @@ impl AppWindow {
             .into_any_element())
     }
 
-    fn pane_hover(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
+    pub(super) fn grip_hover(&mut self, at: Point<Pixels>, cx: &mut Context<Self>) {
         let hovered = self.model.active_tab().and_then(|tab| {
             let bounds = self.bounds.borrow();
             let rows = self.pane_grip_rows.borrow();
@@ -85,101 +78,6 @@ impl AppWindow {
             self.pane_grip_hover = hovered;
             cx.notify();
         }
-    }
-
-    pub(super) fn pane_press(&mut self, pane: &str, at: Point<Pixels>, cx: &mut Context<Self>) {
-        if self.pane_movable(pane) {
-            self.pane_drag = Some(PaneDrag {
-                pane: pane.to_owned(), tab: self.model.active_tab().unwrap().id.clone(),
-                down: at, moving: false, target: None,
-            });
-            cx.notify();
-        }
-    }
-
-    fn pane_target(&self, at: Point<Pixels>) -> Option<(String, Option<Edge>)> {
-        let d = self.pane_drag.as_ref()?;
-        let tab = self.model.active_tab().filter(|t| t.id == d.tab && t.zoomed.is_none())?;
-        let bounds = self.bounds.borrow();
-        tab.shown().visible_blocks().into_iter().filter(|n| n.is_pane() && n.id != d.pane)
-            .find_map(|n| Some((n.id.clone(), drop_zone(*bounds.get(&n.id)?, at)?)))
-    }
-
-    fn pane_move(&mut self, at: Point<Pixels>, pressed: bool, cx: &mut Context<Self>) {
-        let Some(d) = self.pane_drag.as_mut() else { return };
-        if !pressed {
-            self.cancel_pane_drag(cx);
-            return;
-        }
-        if !d.moving && (at.x - d.down.x).abs().max((at.y - d.down.y).abs()) < settings::z(4.) {
-            return;
-        }
-        d.moving = true;
-        let target = self.pane_target(at);
-        self.pane_drag.as_mut().unwrap().target = target;
-        cx.notify();
-    }
-
-    pub(super) fn cancel_pane_drag(&mut self, cx: &mut Context<Self>) {
-        if self.pane_drag.take().is_some() {
-            cx.notify();
-        }
-    }
-
-    fn pane_release(&mut self, at: Point<Pixels>, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        let target = self.pane_target(at);
-        let Some(d) = self.pane_drag.take() else { return false };
-        if !d.moving {
-            cx.notify();
-            return true;
-        }
-        if self.pane_movable(&d.pane)
-            && let Some((target, edge)) = target
-            && self.model.move_pane(&d.pane, &target, edge)
-        {
-            self.sync(window, cx);
-        }
-        cx.defer_in(window, |this, window, cx| this.restore_focus(window, cx));
-        cx.notify();
-        true
-    }
-
-    pub(super) fn pane_drag_layer(&self, cx: &mut Context<Self>) -> AnyElement {
-        let preview = self.pane_drag.as_ref().and_then(|d| d.target.as_ref()).and_then(|(id, edge)| {
-            let mut b = *self.bounds.borrow().get(id)?;
-            match edge {
-                Some(Edge::Left) => b.size.width /= 2.,
-                Some(Edge::Right) => { b.size.width /= 2.; b.origin.x += b.size.width; }
-                Some(Edge::Top) => b.size.height /= 2.,
-                Some(Edge::Bottom) => { b.size.height /= 2.; b.origin.y += b.size.height; }
-                None => {}
-            }
-            Some(div().absolute().left(b.origin.x).top(b.origin.y).w(b.size.width).h(b.size.height)
-                .bg(c("accent").opacity(0.18)).border_2().border_color(c("accent")).into_any_element())
-        });
-        let this = cx.entity().downgrade();
-        div().id("pane-drag-layer").absolute().inset_0()
-            .when(self.pane_drag.is_some(), |d| d.occlude().cursor(CursorStyle::ClosedHand))
-            .children(preview).child(canvas(
-            |_, _, _| {},
-            move |_, _, window, _| {
-                let t = this.clone();
-                window.on_mouse_event(move |ev: &MouseMoveEvent, phase, _, cx| {
-                    if phase == DispatchPhase::Capture {
-                        let _ = t.update(cx, |this, cx| {
-                            this.pane_hover(ev.position, cx);
-                            this.pane_move(ev.position, ev.pressed_button == Some(MouseButton::Left), cx);
-                        });
-                    }
-                });
-                let t = this.clone();
-                window.on_mouse_event(move |ev: &MouseUpEvent, phase, window, cx| {
-                    if phase == DispatchPhase::Capture && ev.button == MouseButton::Left
-                        && t.update(cx, |this, cx| this.pane_release(ev.position, window, cx)).unwrap_or(false)
-                    { cx.stop_propagation(); }
-                });
-            },
-        ).absolute().size_full()).into_any_element()
     }
 }
 

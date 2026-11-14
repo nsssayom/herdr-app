@@ -378,6 +378,10 @@ struct Behavior {
     on_mouse_down_out: Option<CallbackId>,
     on_drop: Option<CallbackId>,
     drag_paths: Option<crate::DraggedPaths>,
+    /// HERDR: what a press here starts dragging for the host (`{tab}`, `{pane}`).
+    drag_move: Option<serde_json::Value>,
+    /// HERDR: where a host drag can be dropped (`{space}`, `{tab}`).
+    drop_move: Option<serde_json::Value>,
     /// Wheel and trackpad scrolling over this element.
     on_scroll_wheel: Option<CallbackId>,
     /// A trackpad pinch over this element, on platforms that report one.
@@ -603,6 +607,8 @@ impl Behavior {
             || self.on_key_down.is_some()
             || self.on_drop.is_some()
             || self.drag_paths.is_some()
+            || self.drag_move.is_some()
+            || self.drop_move.is_some()
             || self.on_key_up.is_some()
             || self.on_modifiers_changed.is_some()
             || !self.on_mouse_down.is_empty()
@@ -1801,6 +1807,9 @@ where
             cx.new(|_| crate::drag_paths::DraggedPathsPreview { paths: paths.clone(), cursor_offset })
         });
     }
+    if let Some(item) = &behavior.drag_move {
+        element = crate::move_drag::source(element, item.clone());
+    }
     if let Some(callback) = behavior.on_drop {
         let runtime = Rc::downgrade(runtime);
         element = element.on_drop(move |paths: &gpui::ExternalPaths, window, cx| {
@@ -2045,6 +2054,8 @@ fn warn_unhonoured_input(component: &Component, behavior: &Behavior) {
         ("on_key_up", behavior.on_key_up.is_some()),
         ("on_drop", behavior.on_drop.is_some()),
         ("drag_paths", behavior.drag_paths.is_some()),
+        ("drag_move", behavior.drag_move.is_some()),
+        ("drop_move", behavior.drop_move.is_some()),
         (
             "on_modifiers_changed",
             behavior.on_modifiers_changed.is_some(),
@@ -2253,6 +2264,7 @@ fn flex_element(
                 .into_any_element(),
             (false, false) => stateful.into_any_element(),
         };
+        let element = drop_target(element, behavior.drop_move.clone());
         return observe_size(element, identity, behavior.on_size_change, runtime, window, cx);
     }
     // The scroll position lives in window element state under this element's
@@ -2275,7 +2287,16 @@ fn flex_element(
         }
         (false, false) => stateful,
     };
-    observe_size(finish(stateful, refinement, children), identity, behavior.on_size_change, runtime, window, cx)
+    let drop = behavior.drop_move.clone();
+    observe_size(drop_target(finish(stateful, refinement, children), drop), identity, behavior.on_size_change, runtime, window, cx)
+}
+
+// HERDR: a host drag's drop target (`drop_move`), around the element.
+fn drop_target(element: AnyElement, target: Option<serde_json::Value>) -> AnyElement {
+    match target {
+        Some(target) => crate::move_drag::target(element, target),
+        None => element,
+    }
 }
 
 fn observe_size(
@@ -3451,6 +3472,12 @@ fn apply_behavior(behavior: &mut Behavior, name: &str, args: &[Bridged]) {
         "drag_paths" => {
             behavior.drag_paths = args.first().and_then(|v| v.as_str().ok())
                 .and_then(|v| serde_json::from_str(v).ok());
+        }
+        "drag_move" | "drop_move" => {
+            let value = args.first().and_then(|v| v.as_str().ok())
+                .and_then(|v| serde_json::from_str::<serde_json::Value>(v).ok())
+                .filter(serde_json::Value::is_object);
+            if name == "drag_move" { behavior.drag_move = value } else { behavior.drop_move = value }
         }
         "href" => {
             behavior.href = args

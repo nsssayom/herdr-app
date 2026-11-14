@@ -103,6 +103,18 @@ machine first, then machines by name; `space.move` stays inside its machine's bl
 In the expanded Spaces sidebar, drag a space to reorder it within its machine;
 the highlighted line shows where it will land.
 
+Moves by dragging (the shipped `main` layout; any mod can offer the same, see
+`drag_move` under UI): drag a tab from the tab bar onto another tab to put it
+there, onto a space in the sidebar (or its number on the folded rail) to move it
+to that space, or down onto a pane of the shown tab to join it as a split on the
+edge you drop it on. Drag a pane by its grip onto a tab to move it into that tab;
+hold it there about 0.6 s and the tab shows, so you can drop it beside one of its
+panes; drop it on the tab bar's empty end or `+` for a tab of its own, or on a
+space for a new tab there. A press becomes a drag after 4 px, so clicks still
+select. The ghost at the pointer says what will happen; spaces on another machine
+fade and refuse (nothing moves between machines). Escape, or letting go where
+nothing would happen, changes nothing.
+
 - A **space** is a place to work, on one machine: this one, or another
   from `hc machine ls` (`spaces()[i].machine`). Herdr leaves out machines
   added with `--temp` (an agent's short-lived sandbox): no spaces, not in
@@ -258,12 +270,14 @@ Properties any node can have:
 - `padding`: space inside the node's edge, px: `16` or `[vertical, horizontal]`.
 - row/column: `gap` (px between children), `divider` (`{ "width": 1, "color": "border" }`),
   `resizable` (default true: drag the boundary). This applies to that row/column only.
-- `movable` (default true): panes can be dragged by the app's top-center grip within a split tab.
+- `movable` (default true): panes can be dragged by the app's top-center grip within a split tab
+  (and from there to other tabs and spaces, as above).
   Unlike `resizable`, it inherits: the nearest explicit ancestor wins, through the
   tab tree and then the layout's tab block and its ancestors. Root `"movable": false`
   opts the layout out. Composition terminal blocks aren't tab panes and never drag.
-  Center drop swaps panes; an edge drop places beside it. Escape or dropping outside
-  another pane cancels. Zoomed tabs and one-pane tabs don't drag. The grip appears
+  Center drop swaps panes; an edge drop places beside it. A pane of another tab (shown
+  after holding over its tab) has only edges, the nearest one. Escape or dropping where
+  nothing would happen cancels. Zoomed tabs and one-pane tabs don't drag. The grip appears
   on top-edge hover, regardless of the header's position or presence. Only the grip
   starts dragging; header mods don't need drag handlers. `panes()` exposes `movable`.
 - `floating`: blocks over this node (below).
@@ -605,8 +619,9 @@ The main ones:
   `tab.rename {id?, name}` ("": its number again), `tab.move {id?, index | by}` (by: places left (-) or right (+), skipping settled tabs as `tab.next` does, wrapping),
   `tab.move {id?, space, index?}` (into another space of its machine, at index, default
   last, with its name, splits, running terminals, focus and zoom; not with `by`),
-  `tab.join {id, direction: "right" | "down", target?}` (the whole tab, splits intact,
-  beside a pane of another tab, default: the focused one; the tab itself goes),
+  `tab.join {id, direction: "left" | "right" | "up" | "down", target?}` (the whole tab,
+  splits intact, beside a pane of another tab, default: the focused one; the tab itself
+  goes; the same four words as `pane.move`'s edge),
   `tab.select {index | id}`, `tab.next`, `tab.prev`,
   `tab.settle {id?}`, `tab.unsettle {id?}` (index, next and prev
   skip settled tabs).
@@ -1065,6 +1080,19 @@ their own position, so pair a `Scrollbar` of the same id instead.
 `.on_drop((event, cx) => …)` on a plain layout element receives external files as
 `event.paths` (absolute paths). The feedback form accepts dropped images with
 the same limits, previews and removal as picked images.
+Moving tabs and panes by dragging is the app's: `.drag_move({ tab: id })` or
+`.drag_move({ pane: id })` on a plain layout element makes its left press start one
+(past 4 px; a click without movement still reaches your handlers), and
+`.drop_move({ space: id })`, `.drop_move({ tab: id })` or
+`.drop_move({ tab: "new", space? })` marks where one can drop. Herdr follows the
+pointer over the whole window, draws a ghost saying what will happen, previews pane
+edges, holds a pane over a tab to show it, and runs the command on release
+(`tab.move`, `tab.join`, `pane.move`; their refusals show as a toast). The innermost
+target under the pointer wins. Read `drag()` to light your targets: `{tab, pane?,
+space, machine, over, valid}` while dragging, else null; `over` is the target as you
+gave it (or `{pane, edge}` over a pane), `valid` whether letting go there moves it.
+A tab dropped on another tab takes its place; on its own source the release is your
+element's click. Nothing moves to another machine: fade those targets.
 `.id("file-row").drag_paths([absolutePath], { on: machine })` makes a plain layout
 element a file/folder drag source for terminals. Omit `on` (or use null)
 for local paths; remote paths retain their source machine. Ordinary clicks
@@ -1094,7 +1122,8 @@ All of it is in `herdr.d.ts`. In short:
   the first read even if it fails, and offline machines are unavailable),
   `agents()` (status, app, space, tab, pinned, focused; "done" turns "idle"
   once someone looks at it on any Herdr client), `terminals()`
-  (every core terminal), `focused()`, `layout()`, `theme()` (every color by
+  (every core terminal), `focused()`, `drag()` (the tab or pane being dragged, see UI),
+  `layout()`, `theme()` (every color by
   name: background (the terminals', cards), canvas (behind cards), chrome
   (sidebars, bars), surface, popover, raised, hover, selected, border,
   input (a stronger border), foreground, muted, dim, accent,

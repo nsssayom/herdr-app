@@ -6498,6 +6498,22 @@ globalThis.__gpui = (() => {
     __apply(this.__id, "drag_paths", [JSON.stringify({paths, on})]);
     return this;
   };
+  // HERDR: a press here can start a drag the app runs (a tab, a pane); a
+  // drop_move element is a place to drop one. The app decides what a drop does.
+  const moveObject = (value, api) => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) {
+      throw new TypeError(`${api} expects an object such as {tab: id}`);
+    }
+    return JSON.stringify(value);
+  };
+  methods.drag_move = function (item) {
+    __apply(this.__id, "drag_move", [moveObject(item, "drag_move(item)")]);
+    return this;
+  };
+  methods.drop_move = function (target) {
+    __apply(this.__id, "drop_move", [moveObject(target, "drop_move(target)")]);
+    return this;
+  };
   methods.drag_tab = function (group, index) {
     const api = "drag_tab(group, index)";
     __apply(this.__id, "drag_tab", [dockTarget(group, api), groupNode(group, api), wholeAt(index, api)]);
@@ -8381,6 +8397,8 @@ impl ShellRuntime {
             | "tab_stop"
             | "href"
             | "drag_paths"
+            | "drag_move"
+            | "drop_move"
             | "id"
             | "overflow_scroll"
             | "overflow_x_scroll"
@@ -8473,6 +8491,8 @@ impl ShellRuntime {
                     "loop" => "loop",
                     "href" => "href",
                     "drag_paths" => "drag_paths",
+                    "drag_move" => "drag_move",
+                    "drop_move" => "drop_move",
                     _ => "accessibility_label",
                 };
                 if name == "id"
