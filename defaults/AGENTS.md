@@ -179,14 +179,28 @@ agents list on the left, `workspace-chrome`; tabs as pills with a + menu
 that starts a terminal or any installed agent, `new-menu`; panes as cards
 with a header; Files and Changes panels on the right, `files` and
 `changes`, opened from the tab bar and remembered per space (which ones:
-shared `"workspace.panels"`, set by the welcome); a status bar,
-`workspace-status`), and as examples `terminals` ("Terminals": tabs in
-the title bar, panes as cards, a space picker) and `win98`
+shared `"workspace.panels"`, set by the welcome); an Editor button after
+them; a status bar, `workspace-status`), and as examples `terminals`
+("Terminals": tabs in the title bar, panes as cards, a space picker) and `win98`
 ("Herdr 98": a whole desktop in one mod, `win98`). Add a layout by
 writing a new file. The Files panel supports Windows folder paths with spaces,
 parentheses and apostrophes, and preserves Unicode file and folder names
 (including Chinese). Directory links expand as folders; their contents load
 only when expanded.
+
+The tab bar's **Editor button** opens the folder you're working in (the
+focused pane's folder when it's in the shown space, else where the space is)
+in an editor app; right-click it to pick one found on this computer or type
+a command (`editor-picker`). The choice is shared `"workspace.editor"`:
+`{ "name": "Zed", "argv": ["open", "-a", "Zed", "{folder}"] }`. `argv` runs
+as given, without a shell; each `{folder}` becomes the folder (without one,
+the folder goes last). It must return once the editor has the folder (`open -a`,
+`code`, `zed`), not run the editor itself: a run still going after 30 seconds
+is stopped. Absent or `null`: VS Code (`open -a "Visual Studio Code"` on macOS,
+`code` on Linux, `code.cmd` on Windows). A mod sets it with
+`setShared("workspace.editor", {...})`. For a space on another machine the
+button is dimmed: its folders aren't on this computer. A failed run shows
+an error toast.
 
 **Herdr's own layouts and mods are read-only.** They are replaced whole
 on every start. Use settings.json for look (fonts, sizes, theme, colors,

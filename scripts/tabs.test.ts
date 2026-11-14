@@ -27,11 +27,12 @@ const values: Record<string, unknown> = {
   View: class {}, div: element, svg: element, image: element, h_flex: element,
   ScrollHandle: { new: () => ({ scroll_to_item() {} }) },
   spaces: () => [{ id: "s1", active: true, tabs: [{ id: "t1", name: "a" }, { id: "t2", name: "b", active: true }, { id: "t3", name: "c" }] }],
-  panes: () => [], run(command: string) { commands.push(command); }, openOverlay() {}, theme: () => ({}),
+  panes: () => [], focused: () => null, run(command: string) { commands.push(command); }, exec: async () => ({ code: 0, stdout: "", stderr: "" }),
+  home: () => "/home/me", notify() {}, openOverlay() {}, theme: () => ({}),
   window: () => null, shared: () => null, layout: () => null, settings: () => ({ zoom: 1 }),
   localStorage: { getItem: (key: string) => store[key] ?? null, setItem(key: string, value: string) { store[key] = value; } },
 };
-const Tabs = new Function(...Object.keys(values), source.replace(/^import .*;\n/gm, "").replace("export default class Tabs", "return class Tabs"))(...Object.values(values));
+const Tabs = new Function(...Object.keys(values), source.replace(/^import .*;\n/gm, "").replace(/^export (?!default)/gm, "").replace("export default class Tabs", "return class Tabs"))(...Object.values(values));
 
 let now = 1_000_000;
 function wheel() {
@@ -101,7 +102,7 @@ test("each wheel notch switches one tab", () => {
   expect(commands).toEqual(["tab.next", "tab.next", "tab.prev"]);
 });
 
-const label = new Function("View", `${source.replace(/^import .*;\n/gm, "").replace("export default class Tabs", "class Tabs")}; return label;`)(class {});
+const label = new Function("View", `${source.replace(/^import .*;\n/gm, "").replace(/^export (?!default)/gm, "").replace("export default class Tabs", "class Tabs")}; return label;`)(class {});
 
 const claude = { program: { name: "Claude Code", key: "claude", agent: true }, title: "my-task" };
 
@@ -139,4 +140,198 @@ test("a shell's title never replaces its tab's name", () => {
   expect(label({ name: "", named: false }, shell)).toBe("zsh");
   expect(label({ name: "notes", named: true }, shell)).toBe("notes");
   expect(label({ name: "", named: false }, undefined)).toBe("Terminal");
+});
+
+// The Editor button: what it runs, with the platform's default or the person's choice.
+type Pane = { pane: string; tab: string; cwd?: string };
+function editorBar(opts: { platform?: string; editor?: unknown; machine?: string | null; panes?: Pane[]; focused?: unknown; exec?: (cmd: string, args: string[]) => Promise<unknown> } = {}) {
+  const ran: [string, string[]][] = [], toasts: Record<string, unknown>[] = [], overlays: Record<string, any>[] = [], tasks: Promise<unknown>[] = [];
+  const env: Record<string, unknown> = {
+    View: class {}, div: element, svg: element, image: element, h_flex: element,
+    ScrollHandle: { new: () => ({ scroll_to_item() {} }) },
+    spaces: () => [{ id: "s1", name: "api", folder: "/made/here", machine: opts.machine ?? null, active: true, tabs: [{ id: "t1", name: "1", active: true }] }],
+    panes: () => opts.panes ?? [{ pane: "p1", tab: "t1", cwd: "/work/My \"quoted\" folder's copy" }],
+    focused: () => opts.focused ?? { pane: "p1" },
+    run() {}, home: () => "/Users/me",
+    exec: opts.exec ?? (async (cmd: string, args: string[]) => { ran.push([cmd, args]); return { code: 0, stdout: "", stderr: "" }; }),
+    notify(n: Record<string, unknown>) { toasts.push(n); return "n1"; },
+    openOverlay(o: Record<string, unknown>) { overlays.push(o); return "o1"; },
+    theme: () => ({}), window: () => ({ platform: opts.platform ?? "macos", buttons: false }),
+    shared: (key: string) => key === "workspace.editor" ? opts.editor ?? null : key === "workspace.panels" ? ["files"] : null,
+    layout: () => null, settings: () => ({ zoom: 1 }),
+    localStorage: { getItem: () => null, setItem() {} },
+  };
+  const body = `${source.replace(/^import .*;\n/gm, "").replace(/^export (?!default)/gm, "").replace("export default class Tabs", "class Tabs")}; return { Tabs, editorArgv, workFolder, installedEditors, EDITORS };`;
+  const mod = new Function(...Object.keys(env), body)(...Object.values(env));
+  const view = new mod.Tabs();
+  view.init();
+  const find = (el: Element, id: string): Element | undefined => typeof el !== "object" ? undefined : el.calls.id?.[0] === id ? el : el.nodes.map(n => find(n, id)).find(Boolean);
+  const button = () => find(view.render() as Element, "open-editor");
+  let stopped = 0;
+  const cx = { stop_propagation() { stopped++; }, spawn(fn: (cx: unknown) => Promise<unknown>) { tasks.push(fn(cx)); }, notify() {} };
+  const click = async () => { (button()!.calls.on_click[0] as Function)({}, cx); await Promise.all(tasks); };
+  const rightClick = async () => {
+    const [button_, handler] = button()!.calls.on_mouse_down as [string, Function];
+    expect(button_).toBe("right");
+    handler({}, cx);
+    await Promise.all(tasks);
+  };
+  return { mod, button, click, rightClick, ran, toasts, overlays, stopped: () => stopped };
+}
+const text = (el: Element): string => el.nodes.map(n => typeof n === "string" ? n : text(n)).join("");
+
+test("the editor gets the folder as one argument, spaces and quotes intact", async () => {
+  const bar = editorBar();
+  const folder = "/work/My \"quoted\" folder's copy";
+  expect(bar.mod.editorArgv(["open", "-a", "Visual Studio Code", "{folder}"], folder)).toEqual(["open", "-a", "Visual Studio Code", folder]);
+  expect(bar.mod.editorArgv(["code", "--reuse-window"], "/a b")).toEqual(["code", "--reuse-window", "/a b"]);
+  expect(bar.mod.editorArgv(["ed", "--root={folder}"], "/a b")).toEqual(["ed", "--root=/a b"]);
+  await bar.click();
+  expect(bar.ran).toEqual([["open", ["-a", "Visual Studio Code", folder]]]);
+  expect(bar.toasts).toEqual([]);
+});
+
+test("unset, each platform opens VS Code its own way", async () => {
+  const want: Record<string, [string, string[]]> = {
+    macos: ["open", ["-a", "Visual Studio Code", "/w"]],
+    linux: ["code", ["/w"]],
+    windows: ["code.cmd", ["/w"]],
+  };
+  for (const [platform, argv] of Object.entries(want)) {
+    const bar = editorBar({ platform, panes: [{ pane: "p1", tab: "t1", cwd: "/w" }] });
+    expect(text(bar.button()!)).toBe("VS Code");
+    await bar.click();
+    expect(bar.ran).toEqual([argv]);
+  }
+});
+
+test("a chosen editor is named on the button and run as configured", async () => {
+  const bar = editorBar({ platform: "linux", editor: { name: "Zed", argv: ["zed", "--new", "{folder}"] }, panes: [{ pane: "p1", tab: "t1", cwd: "/w x" }] });
+  expect(text(bar.button()!)).toBe("Zed");
+  await bar.click();
+  expect(bar.ran).toEqual([["zed", ["--new", "/w x"]]]);
+  // Without a name: the app `open -a` opens, else the program's.
+  expect(text(editorBar({ editor: { argv: ["open", "-a", "Nova", "{folder}"] } }).button()!)).toBe("Nova");
+  expect(text(editorBar({ editor: { argv: ["/opt/bin/hx"] } }).button()!)).toBe("hx");
+  // Not a launcher: the default.
+  for (const editor of [{ argv: [] }, { argv: "zed" }, { argv: [1] }, "zed", { name: "x" }]) expect(text(editorBar({ editor }).button()!)).toBe("VS Code");
+});
+
+test("the folder is the focused pane's in the shown space, else where the space is", async () => {
+  const panes = [{ pane: "p9", tab: "elsewhere", cwd: "/other/space" }, { pane: "p1", tab: "t1", cwd: "/first/terminal" }, { pane: "p2", tab: "t1", cwd: "/focused" }];
+  const run = async (focused: unknown, ps: Pane[] = panes) => { const bar = editorBar({ focused, panes: ps }); await bar.click(); return bar.ran[0][1].at(-1); };
+  expect(await run({ pane: "p2" })).toBe("/focused");
+  expect(await run({ pane: "p9" })).toBe("/first/terminal");
+  expect(await run(null)).toBe("/first/terminal");
+  expect(await run({ pane: "p2" }, [{ pane: "p2", tab: "t1" }])).toBe("/made/here");
+});
+
+test("a space on another machine dims the button and opens nothing here", async () => {
+  const bar = editorBar({ machine: "vehiclesec" });
+  const b = bar.button()!;
+  expect(String(b.calls.tooltip[0])).toContain("vehiclesec");
+  expect(b.calls.hover).toBeUndefined();
+  await bar.click();
+  expect(bar.ran).toEqual([]);
+  expect(bar.toasts).toEqual([]);
+});
+
+test("a failed launch shows why in an error toast", async () => {
+  const missing = editorBar({ exec: async () => ({ code: 1, stdout: "", stderr: "Unable to find application named 'Visual Studio Code'\n" }) });
+  await missing.click();
+  expect(missing.toasts).toEqual([{ title: "Couldn't open VS Code", body: "Unable to find application named 'Visual Studio Code'", level: "error" }]);
+  const absent = editorBar({ platform: "linux", exec: async () => { throw new Error("cannot run code: No such file or directory (os error 2)"); } });
+  await absent.click();
+  expect(absent.toasts[0]).toMatchObject({ level: "error", body: "code wasn't found. Right-click VS Code to choose another editor." });
+  const silent = editorBar({ exec: async () => ({ code: 3, stdout: "", stderr: "" }) });
+  await silent.click();
+  expect(silent.toasts[0]).toMatchObject({ level: "error", body: "open exited with code 3." });
+});
+
+test("right-click offers the editors found here, with the default to go back to", async () => {
+  const seen: [string, string[]][] = [];
+  const bar = editorBar({ exec: async (cmd, args) => { seen.push([cmd, args]); return { code: 1, stdout: "Safari.app\nVisual Studio Code.app\nXcode.app\nZed.app\n", stderr: "ls: /Users/me/Applications: No such file or directory" }; } });
+  await bar.rightClick();
+  expect(seen).toEqual([["ls", ["-1", "/Applications", "/Users/me/Applications"]]]);
+  expect(bar.overlays).toHaveLength(1);
+  expect(bar.overlays[0]).toMatchObject({ mod: "editor-picker", kind: "popup" });
+  expect(bar.overlays[0].props.editors.map((e: { name: string }) => e.name)).toEqual(["VS Code", "Zed", "Xcode"]);
+  expect(bar.overlays[0].props.editors[1].argv).toEqual(["open", "-a", "Zed", "{folder}"]);
+  expect(bar.overlays[0].props.fallback).toEqual({ name: "VS Code", argv: ["open", "-a", "Visual Studio Code", "{folder}"] });
+  expect(bar.ran).toEqual([]);
+  // A failed look still opens the menu (custom command, the current choice).
+  const failing = editorBar({ exec: async () => { throw new Error("nope"); } });
+  await failing.rightClick();
+  expect(failing.overlays[0].props.editors).toEqual([]);
+});
+
+test("editors are looked for without a shell string: Linux names them as arguments, Windows asks where", async () => {
+  const { installedEditors } = editorBar().mod;
+  const calls: [string, string[]][] = [];
+  const linux = await installedEditors("linux", async (cmd: string, args: string[]) => { calls.push([cmd, args]); return { code: 0, stdout: "code\nzeditor\n", stderr: "" }; });
+  expect(calls[0][0]).toBe("sh");
+  expect(calls[0][1].slice(3)).toEqual(["code", "cursor", "windsurf", "zed", "zeditor", "subl"]);
+  expect(linux).toEqual([{ name: "VS Code", argv: ["code", "{folder}"] }, { name: "Zed", argv: ["zeditor", "{folder}"] }]);
+  const windows = await installedEditors("windows", async () => ({ code: 1, stdout: "C:\\Users\\me\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd\r\n", stderr: "INFO: Could not find files" }));
+  expect(windows).toEqual([{ name: "VS Code", argv: ["code.cmd", "{folder}"] }]);
+});
+
+// The chooser it opens.
+const pickerSource = (await readFile(new URL("../defaults/mods/editor-picker/main.js", import.meta.url), "utf8"))
+  .replace(/^import .*;\n/gm, "").replace(/^export (?!default)/gm, "").replace("export default class EditorPicker", "class EditorPicker");
+function picker(p: Record<string, unknown>, editor: unknown = null) {
+  const store: Record<string, unknown> = { "workspace.editor": editor }, closed: string[] = [];
+  let value = "";
+  const input = { on() {}, focus() {}, set_value(v: string) { value = v; }, value: () => value };
+  const env: Record<string, unknown> = {
+    View: class {}, div: element, svg: element, v_flex: element, h_flex: element,
+    InputState: { new: () => input }, Input: { new: element },
+    props: () => ({ overlay: "o1", ...p }), closeOverlay(id: string) { closed.push(id); }, theme: () => ({}),
+    shared: (k: string) => store[k] ?? null, setShared(k: string, v: unknown) { store[k] = v; },
+  };
+  const mod = new Function(...Object.keys(env), `${pickerSource}; return { EditorPicker, parseCommand, formatCommand, commandName };`)(...Object.values(env));
+  const view = new mod.EditorPicker();
+  view.init({}, { focus_handle: () => ({ focus() {} }) });
+  const cx = { notify() {} };
+  return { mod, view, store, closed, cx, type(v: string) { value = v; } };
+}
+const vscode = { name: "VS Code", argv: ["open", "-a", "Visual Studio Code", "{folder}"] };
+const zed = { name: "Zed", argv: ["open", "-a", "Zed", "{folder}"] };
+
+test("picking an editor saves it; picking the default clears the choice", () => {
+  const p = picker({ editors: [vscode, zed], fallback: vscode });
+  expect(p.view.entries().map((e: { name: string }) => e.name)).toEqual(["VS Code", "Zed"]);
+  p.view.pick(zed);
+  expect(p.store["workspace.editor"]).toEqual(zed);
+  expect(p.closed).toEqual(["o1"]);
+  const back = picker({ editors: [vscode, zed], fallback: vscode }, zed);
+  back.view.pick(vscode);
+  expect(back.store["workspace.editor"]).toBeNull();
+});
+
+test("a custom choice not found here stays listed first", () => {
+  const helix = { name: "hx", argv: ["hx", "{folder}"] };
+  const p = picker({ editors: [vscode, zed], fallback: vscode }, helix);
+  expect(p.view.entries()).toEqual([helix, vscode, zed]);
+});
+
+test("a typed command becomes argv without a shell, quotes keeping spaces", () => {
+  const { parseCommand, formatCommand, commandName } = picker({}).mod;
+  expect(parseCommand(`open -a "Sublime Text" {folder}`)).toEqual(["open", "-a", "Sublime Text", "{folder}"]);
+  expect(parseCommand(`  "C:\\Program Files\\Zed\\zed.exe"   '{folder}' --x="a b" `)).toEqual(["C:\\Program Files\\Zed\\zed.exe", "{folder}", "--x=a b"]);
+  expect(parseCommand(`code "" {folder}`)).toEqual(["code", "", "{folder}"]);
+  for (const argv of [["open", "-a", "Sublime Text", "{folder}"], ["say", `it's "x"`], ["say", `"it's"`], ["e", ""]]) expect(parseCommand(formatCommand(argv))).toEqual(argv);
+  expect(commandName(["open", "-a", "Sublime Text", "{folder}"])).toBe("Sublime Text");
+  expect(commandName(["C:\\Tools\\zed.exe", "{folder}"])).toBe("zed");
+  const p = picker({ fallback: vscode });
+  p.view.openCustom(p.cx);
+  p.type(`"/opt/my editor/bin/ed" --open {folder}`);
+  p.view.save();
+  expect(p.store["workspace.editor"]).toEqual({ name: "ed", argv: ["/opt/my editor/bin/ed", "--open", "{folder}"] });
+  const empty = picker({ fallback: vscode });
+  empty.view.openCustom(empty.cx);
+  empty.type("   ");
+  empty.view.save();
+  expect(empty.view.error).toBeTruthy();
+  expect(empty.closed).toEqual([]);
 });
