@@ -545,3 +545,113 @@ test("the list reveals the active space again when a machine header shifts its p
   h.view.render();
   expect(h.view.scroll.calls).toEqual([1, 2]);
 });
+
+// Machine headers: what each part of the row does when clicked.
+type Node = { id?: string; src?: string; calls: Record<string, any[][]>; kids: (Node | string)[] };
+function headerHarness(opts: { state?: string; layoutPx?: number; folded?: string[]; logout?: boolean } = {}) {
+  const ran: [string, unknown][] = [], overlays: unknown[] = [];
+  const storage = new Map<string, string>(opts.folded ? [["machines.folded", JSON.stringify(opts.folded)]] : []);
+  const make = (): any => {
+    const node: Node = { calls: {}, kids: [] };
+    const proxy: any = new Proxy(node, { get: (target, key: string) => key in target ? (target as any)[key] : (...args: any[]) => {
+      if (key === "id") target.id = args[0];
+      if (key === "child") target.kids.push(args[0]);
+      else if (key === "children") target.kids.push(...args[0]);
+      else if (key === "when") { if (args[0]) args[1](proxy); }
+      else (target.calls[key] ??= []).push(args);
+      return proxy;
+    } });
+    return proxy;
+  };
+  const snapshot = [{ id: "a", name: "a", folder: "/a", machine: null, active: true, tabs: [] }, { id: "r", name: "r", folder: "/r", machine: "vehiclesec", active: false, tabs: [] }];
+  const env: Record<string, unknown> = {
+    View: class {}, div: make, v_flex: make, h_flex: make, svg: (src: string) => Object.assign(make(), { src }),
+    ScrollHandle: { new: () => ({ scroll_to_item() {} }) },
+    spaces: () => snapshot, machines: () => [{ name: null, layout: "ready" }, { name: "vehiclesec", layout: "ready" }], panes: () => [],
+    run(name: string, args: unknown) { ran.push([name, args]); }, openOverlay(o: unknown) { overlays.push(o); },
+    exec: async () => ({ code: 0, stdout: "", stderr: "" }), hc: async () => ({ code: 0, stdout: "{}", stderr: "" }),
+    theme: () => new Proxy({}, { get: (_, k) => `#${String(k)}` }), shared: () => null, setShared() {}, watchFolder: () => new Promise(() => {}),
+    window: () => ({ active: true }), layout: () => opts.layoutPx ? { id: "sidebar", size: { px: opts.layoutPx } } : null,
+    localStorage: { setItem(k: string, v: string) { storage.set(k, v); }, getItem: (k: string) => storage.get(k) ?? null },
+  };
+  const Spaces = new Function(...Object.keys(env), `${source}; return Spaces;`)(...Object.values(env));
+  const view = new Spaces();
+  view.init({}, { timer: { every() {} }, spawn() {}, notify() {} });
+  Object.assign(view, { git: {}, shown: new Set(["a", "r"]) });
+  view.machines = [{ name: "vehiclesec", state: opts.state ?? "connected", target: "vehiclesec", ...(opts.logout ? { keeps_running_after_logout: false } : {}) }];
+  const all = (n: Node | string): Node[] => typeof n === "string" ? [] : [n, ...n.kids.flatMap(all)];
+  const find = (id: string) => all(view.render()).find(n => n.id === id);
+  const text = (n: Node | string): string => typeof n === "string" ? n : n.kids.map(text).join("");
+  let stopped = 0, notified = 0;
+  const cx = { stop_propagation() { stopped++; }, notify() { notified++; } };
+  const handler = (n: Node, name: string, button?: string) => {
+    const call = n.calls[name]?.find(args => button === undefined || args[0] === button);
+    return call?.at(-1) as (e: unknown, cx: unknown) => void;
+  };
+  return { view, find, text, ran, overlays, storage, cx, handler, stopped: () => stopped, notified: () => notified };
+}
+
+test("a machine header's + starts a space on that machine without folding it", () => {
+  const h = headerHarness();
+  for (const [id, machine] of [["machine-add-local", ""], ["machine-add-vehiclesec", "vehiclesec"]]) {
+    const add = h.find(id)!;
+    expect(add.calls.size[0][0]).toBeGreaterThanOrEqual(22); // a comfortable target
+    expect(add.calls.tooltip[0][0]).toBe(`New space on ${machine || "this computer"}`);
+    // The press stops too, so the header behind it neither shows pressed nor folds.
+    const before = h.stopped();
+    h.handler(add, "on_mouse_down", "left")({}, h.cx);
+    h.handler(add, "on_click")({}, h.cx);
+    expect(h.stopped()).toBe(before + 2);
+    expect(h.ran.at(-1)).toEqual(["space.new", { machine }]);
+  }
+  expect(h.view.folded.size).toBe(0);
+});
+
+test("clicking anywhere else on a machine header folds and unfolds it", () => {
+  const h = headerHarness();
+  const head = () => h.find("machine-vehiclesec")!;
+  expect(head().calls.h[0][0]).toBeLessThanOrEqual(30); // no taller than a space row
+  // The chevron leads the row, as in a file tree.
+  const chevron = () => ((head().kids[0] as Node).kids[0] as Node).src;
+  expect(chevron()).toBe("mods/workspace-chrome/chevron-down.svg");
+  h.handler(head(), "on_click")({}, h.cx);
+  expect([...h.view.folded]).toEqual(["vehiclesec"]);
+  expect(JSON.parse(h.storage.get("machines.folded")!)).toEqual(["vehiclesec"]);
+  expect(h.find("space-r")).toBeUndefined();
+  expect(chevron()).toBe("mods/workspace-chrome/chevron-right.svg");
+  h.handler(head(), "on_click")({}, h.cx);
+  expect(h.view.folded.size).toBe(0);
+  expect(h.find("space-r")).toBeDefined();
+  expect(h.ran).toEqual([]);
+});
+
+test("the status dot sits on the machine icon, and the state word stays", () => {
+  const h = headerHarness({ state: "unreachable" });
+  const mark = h.find("machine-state-vehiclesec")!;
+  expect(mark.calls.tooltip[0][0]).toBe("vehiclesec · unreachable");
+  const dot = (mark.kids[1] as Node);
+  expect(dot.calls.bg[0][0]).toBe("#dim");
+  expect(h.text(h.find("machine-vehiclesec")!)).toContain("unreachable");
+  // Nowhere to start a space on a machine that isn't there.
+  expect(h.find("machine-add-vehiclesec")).toBeUndefined();
+  const local = h.find("machine-state-local")!;
+  expect((local.kids[1] as Node).calls.bg[0][0]).toBe("#ansi2");
+});
+
+test("the logout warning opens its fix without folding the machine", () => {
+  const h = headerHarness({ logout: true });
+  const warn = h.find("machine-logout-vehiclesec")!;
+  h.handler(warn, "on_mouse_down", "left")({}, h.cx);
+  h.handler(warn, "on_click")({}, h.cx);
+  expect(h.overlays).toEqual([{ mod: "machine-add", kind: "dialog", width: 560 }]);
+  expect(h.view.folded.size).toBe(0);
+});
+
+test("the rail keeps its one-button machine cells", () => {
+  const h = headerHarness({ layoutPx: 76 });
+  expect(h.find("machine-add-local")).toBeUndefined();
+  const head = h.find("machine-vehiclesec")!;
+  expect(head.calls.tooltip[0][0]).toBe("vehiclesec · connected");
+  h.handler(head, "on_click")({}, h.cx);
+  expect([...h.view.folded]).toEqual(["vehiclesec"]);
+});
