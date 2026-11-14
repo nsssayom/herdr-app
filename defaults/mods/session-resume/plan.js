@@ -4,7 +4,8 @@
 // main.js gathers the facts (terminals(), the boot id, which paths exist),
 // asks these functions what to do, and carries it out.
 //
-// The label `herdr.session` is written by session-hook.py (see the README):
+// The label `herdr.session` is written by contrib/session-resume/session-hook.py
+// (see its README and docs/labels.md):
 // {"v":1,"agent","id","cwd","transcript","mode","root","boot","agent_pid",
 //  "state","why","at","tried"}
 
@@ -101,6 +102,9 @@ export const tryKey = (t, boot) => `${t.pid}@${boot ?? "?"}`;
 export const triedNow = (rec, t, boot) => typeof rec.tried === "string" && rec.tried.split("#")[0] === tryKey(t, boot);
 
 export const isLocal = (t) => typeof t?.address === "string" && t.address !== "" && !t.address.includes("/");
+
+/** Some local terminal carries a session label: without the hook none ever does, and the mod stays idle. */
+export const anyRecorded = (terminals) => (terminals ?? []).some((t) => isLocal(t) && typeof t?.labels?.[LABEL] === "string");
 
 /** Herdr shows it: kept, live, in a space's tab. */
 function inHerdr(t) {

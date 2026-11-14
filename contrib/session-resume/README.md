@@ -4,15 +4,18 @@ After a restart, each Herdr tab that was running Claude Code or Codex gets the
 same session back, in its own terminal.
 
 Herdr keeps terminals through a reboot, but a kept terminal comes back as a
-plain shell: its program is never run again. This adds that missing step
-without changing Herdr or herdr-core:
+plain shell: its program is never run again. Two parts, with no change to
+herdr-core:
 
-- `session-hook.py`, the agents' SessionStart and SessionEnd hook, writes one
-  label, `herdr.session`, on the terminal the agent runs in: which session,
-  in which folder, and whether it ended or was cut off.
+- `session-hook.py` (here), the agents' SessionStart and SessionEnd hook,
+  writes one label, `herdr.session`, on the terminal the agent runs in: which
+  session, in which folder, and whether it ended or was cut off.
 - the `session-resume` mod reads those labels. When a kept terminal comes back
   at a bare shell, it types the resume command into it (Claude Code), or offers
-  to (Codex, and anything ambiguous).
+  to (Codex, and anything ambiguous). This fork ships it in
+  `defaults/mods/session-resume/`, as a floating block of the shipped `main`
+  layout. Without the hook no terminal has the label and the mod does nothing:
+  no programs run, nothing drawn.
 
 macOS and Linux, terminals on this machine only. Python 3 (standard library) for the hook.
 
@@ -23,37 +26,49 @@ python3 contrib/session-resume/install.py            # says what it would change
 python3 contrib/session-resume/install.py --apply    # does it (backs up every file it replaces)
 ```
 
-It copies the hook to `~/.local/share/herdr-session-resume/`, adds one
+It copies the hook to `~/.local/share/herdr-session-resume/` and adds one
 SessionStart and one SessionEnd entry to `~/.claude/settings.json` and to
-`~/.codex/hooks.json` (other hooks and settings stay as they were), and copies
-the mod to `~/.config/herdr-app/mods/session-resume/`. Run it again any time:
-it changes only what differs. `--uninstall` removes exactly what it added.
-Every path has a flag (`--claude-settings`, `--codex-hooks`, `--app-home`,
-`--hook-dir`, `--python`, `--home`); `--agents claude` hooks only one agent.
-`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `HERDR_APP_HOME` and `XDG_DATA_HOME` are honoured.
+`~/.codex/hooks.json` (other hooks and settings stay as they were). Run it
+again any time: it changes only what differs. `--uninstall` removes exactly
+what it added. Every path has a flag (`--claude-settings`, `--codex-hooks`,
+`--app-home`, `--hook-dir`, `--python`, `--home`); `--agents claude` hooks only
+one agent. `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `HERDR_APP_HOME` and
+`XDG_DATA_HOME` are honoured.
+
+With this fork's Herdr that is all: its `main` layout already runs the mod
+(it reports so, from the app home's `installed.json`). In a personal layout
+(a clone made before this version, or your own), add the floating block below.
 
 Then, by hand:
 
-1. **Put the mod in your layout.** A mod runs only in a layout that holds it,
-   and Herdr's own layouts are read-only, so use a personal layout (to start
-   from the default one: `herdr-app do layout.clone '{"name":"main","as":"main-resume"}'`)
-   and add to its root node:
-
-   ```json
-   "floating": [
-     { "id": "session-resume", "content": { "mod": "session-resume" }, "edge": "bottom", "align": "end" }
-   ]
-   ```
-
-   It draws nothing until a session waits for you; then a small "Resume N
-   sessions" chip shows in the corner.
-2. **Codex: trust the hooks.** Start `codex` and run `/hooks`; Codex skips hooks
+1. **Codex: trust the hooks.** Start `codex` and run `/hooks`; Codex skips hooks
    it hasn't been told to trust.
-3. **Optional keys** (`keys.json`, `"global"`): `"<key>": "session-resume.resume"`
-   resumes the focused tab's session now, whatever state it is in;
-   `"<key>": "session-resume.offer"` opens the dialog (and its setting).
+2. **Optional keys** (`keys.json`, `"global"`; none are bound by default):
+   `"<key>": "session-resume.resume"` resumes the focused tab's session now,
+   whatever state it is in; `"<key>": "session-resume.offer"` opens the dialog
+   (and its setting).
 
 Agents already running pick the hooks up at their next start.
+
+### The official Herdr app (or a personal layout)
+
+The official app doesn't ship the mod. `--with-mod` also copies it from this
+checkout's `defaults/mods/session-resume/` into `~/.config/herdr-app/mods/`
+(and `--uninstall --with-mod` removes it). It is ignored where the app ships
+the mod itself, since the app would move a changed copy aside. A mod runs only
+in a layout that holds it, and Herdr's own layouts are read-only, so use a
+personal layout (to start from the default one:
+`herdr-app do layout.clone '{"name":"main","as":"main-resume"}'`) and add to
+its root node:
+
+```json
+"floating": [
+  { "id": "session-resume", "content": { "mod": "session-resume" }, "edge": "bottom", "align": "end" }
+]
+```
+
+It draws nothing until a session waits for you; then a small "Resume N
+sessions" chip shows in the corner.
 
 ## What happens after a restart
 
@@ -129,7 +144,8 @@ id), `boot` (this boot's id: macOS `kern.bootsessionuuid`, Linux `boot_id`),
 `agent_pid` (the agent's process group), `state`, `why` (the end reason),
 `at` (ms), `tried` (`<pid>@<boot>#<mark>`). **No prompts, messages, command
 lines or environment.** The label lives in herdr-core with the terminal and
-goes when the terminal is closed. `hc get <t>` shows it.
+goes when the terminal is closed. `hc get <t>` shows it. The format is in
+`docs/labels.md`.
 
 ## Limits
 
@@ -151,11 +167,12 @@ goes when the terminal is closed. `hc get <t>` shows it.
 ## Files
 
 - `session-hook.py`: the hook (`session-hook.py claude|codex`, JSON on stdin; `--boot` prints the boot id).
-- `mod/`: the mod; `plan.js` holds every decision, `main.js` carries them out.
+- `../../defaults/mods/session-resume/`: the mod; `plan.js` holds every decision, `main.js` carries them out.
 - `install.py`: install / uninstall, dry run by default.
 - `test_session_hook.py`: `python3 -B -m unittest discover -s contrib/session-resume -p test_session_hook.py`
   (the hook with a fake `hc` and a real PTY; install.py against throwaway homes).
-- `plan.test.ts`: `bun test contrib/session-resume/plan.test.ts` (plan.js, and main.js against a fake core).
+- `../../scripts/session-resume.test.ts`: `bun test scripts/session-resume.test.ts`, part of `just test`
+  (plan.js, and main.js against a fake core).
 
 Parts of the hook follow upstream Herdr's `scripts/agent_session.py` on its
 `fix/durable-agent-session-capture` branch (Apache-2.0, as this repository).

@@ -1,8 +1,8 @@
-// bun test contrib/session-resume/plan.test.ts
+// The session-resume mod (defaults/mods/session-resume) and its label, from contrib/session-resume/session-hook.py.
 import { test, expect, describe } from "bun:test";
 import { readFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import * as plan from "./mod/plan.js";
+import * as plan from "../defaults/mods/session-resume/plan.js";
 
 const {
   LABEL, shQuote, parseRecord, resumeCommand, choiceFor, atBareShell, shellInFront, restored, assess, assessManual,
@@ -336,7 +336,7 @@ describe("this machine", () => {
       mine = p.parse(execFileSync(p.cmd, p.args).toString());
       if (mine) break;
     }
-    const hook = execFileSync("python3", [new URL("./session-hook.py", import.meta.url).pathname, "--boot"]).toString().trim();
+    const hook = execFileSync("python3", [new URL("../contrib/session-resume/session-hook.py", import.meta.url).pathname, "--boot"]).toString().trim();
     expect(mine).toBe(hook);
     expect(parseRecord(JSON.stringify(rec({ boot: mine }))).rec).not.toBeNull();
   });
@@ -358,11 +358,11 @@ describe("this machine", () => {
 
 // ---- main.js against a fake core ---------------------------------------------
 
-const source = (await readFile(new URL("./mod/main.js", import.meta.url), "utf8"))
+const source = (await readFile(new URL("../defaults/mods/session-resume/main.js", import.meta.url), "utf8"))
   .replace(/^import [\s\S]*?;\n/gm, "")
   .replace("export default class SessionResume", "class SessionResume");
 
-function engineHarness(list: any[], opts: { shared?: Record<string, unknown>; claimLost?: boolean; sendFails?: boolean; frozen?: boolean } = {}) {
+function engineHarness(list: any[], opts: { shared?: Record<string, unknown>; claimLost?: boolean; sendFails?: boolean; frozen?: boolean; live?: boolean; boot?: string } = {}) {
   const core = new Map(list.map((t) => [t.address, structuredClone(t)]));
   const snapshot = structuredClone(list);
   const calls: string[][] = [];
@@ -385,7 +385,9 @@ function engineHarness(list: any[], opts: { shared?: Record<string, unknown>; cl
     if (args[0] === "send") return opts.sendFails ? { code: 9, stdout: "", stderr: "blocked" } : { code: 0, stdout: "{}", stderr: "" };
     return { code: 2, stdout: "", stderr: "?" };
   };
+  const execs: string[][] = [];
   const exec = async (cmd: string, args: string[]) => {
+    execs.push([cmd, ...args]);
     if (cmd === "/bin/sh") return { code: 0, stdout: args.slice(3).map(() => "1").join("\n") + "\n", stderr: "" };
     return { code: 0, stdout: `${BOOT}\n`, stderr: "" };
   };
@@ -393,19 +395,49 @@ function engineHarness(list: any[], opts: { shared?: Record<string, unknown>; cl
     hc, exec, terminals: () => (opts.frozen ? structuredClone(snapshot) : [...core.values()].map((t) => structuredClone(t))), spaces: () => [],
     focused: () => ({ terminal: "t7" }), notify: (n: any) => toasts.push(n), openOverlay: () => "o1", closeOverlay: () => null,
     props: () => ({}), shared: (k: string) => store[k], setShared: (k: string, v: unknown) => { store[k] = v; },
-    nextCommand: () => new Promise(() => {}), theme: () => ({}), checking: () => true, window: () => ({ platform: "macos" }),
+    nextCommand: () => new Promise(() => {}), theme: () => ({}), checking: () => !opts.live, window: () => ({ platform: "macos" }),
   };
   const scope: Record<string, unknown> = { herdr: api, View: class {}, div: () => ({}), v_flex: () => ({}), h_flex: () => ({}), ...plan };
   const Engine = new Function(...Object.keys(scope), `${source}; return SessionResume;`)(...Object.values(scope));
   const engine = new Engine();
-  engine.init({}, { spawn() {}, timer: { after() {}, every() {} } });
-  engine.boot = BOOT;
-  const cx = { sleep: async () => {}, notify() {} };
+  const timers: Array<(cx: unknown) => void> = [];
+  const tasks: Promise<unknown>[] = [];
+  const cx: any = { sleep: async () => {}, notify() {}, spawn: (body: (cx: unknown) => unknown) => { tasks.push(Promise.resolve(body(cx))); } };
+  engine.init({}, { spawn: (body: (cx: unknown) => unknown) => { if (opts.live) body(cx); }, // the nextCommand loop: never awaited
+    timer: { after() {}, every: (_ms: number, f: any) => timers.push(f) } });
+  if (!opts.live) engine.boot = opts.boot ?? BOOT;
+  /** One tick as the app's timer would run it. */
+  const tick = async () => { for (const f of timers) f(cx); await Promise.all(tasks.splice(0)); };
   const label = (a = "t7") => JSON.parse(core.get(a)!.labels[LABEL]);
-  return { engine, core, calls, toasts, store, cx, label, sends: () => calls.filter((c) => c[0] === "send") };
+  return { engine, core, calls, execs, toasts, store, cx, tick, timers, label, sends: () => calls.filter((c) => c[0] === "send") };
 }
 
 describe("main.js", () => {
+  test("without the hook (no session labels) it does nothing at all: no exec, no hc, no toast, no chip", async () => {
+    const plain = { ...term(null), labels: {} };
+    const h = engineHarness([plain, term(null, { address: "t8" })], { live: true });
+    expect(h.timers).toHaveLength(1);
+    for (let i = 0; i < 3; i++) await h.tick();
+    expect(h.execs).toEqual([]);
+    expect(h.calls).toEqual([]);
+    expect(h.toasts).toEqual([]);
+    expect(h.engine.offers).toEqual([]);
+    expect(h.engine.boot).toBeUndefined();
+  });
+
+  test("the boot id is read once, when a label first shows up", async () => {
+    const h = engineHarness([term(rec({ state: "ended" }))], { live: true });
+    await h.tick();
+    await h.tick();
+    expect(h.execs).toEqual([["sysctl", "-n", "kern.bootsessionuuid"]]);
+    expect(h.engine.boot).toBe(BOOT);
+  });
+
+  test("a check of the mod (checking()) starts nothing", () => {
+    const h = engineHarness([term()]);
+    expect(h.timers).toHaveLength(0);
+  });
+
   test("a restored Claude tab is resumed once: claim, type, relabel", async () => {
     const h = engineHarness([term(rec({ cwd: "/w/it's", mode: "acceptEdits" }))]);
     await h.engine.tick(h.cx);

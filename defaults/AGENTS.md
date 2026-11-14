@@ -177,7 +177,8 @@ that starts a terminal or any installed agent, `new-menu`; panes as cards
 with a header; Files and Changes panels on the right, `files` and
 `changes`, opened from the tab bar and remembered per space (which ones:
 shared `"workspace.panels"`, set by the welcome); a status bar,
-`workspace-status`), and as examples `terminals` ("Terminals": tabs in
+`workspace-status`; and `session-resume` floating in the bottom corner, see
+the mods below), and as examples `terminals` ("Terminals": tabs in
 the title bar, panes as cards, a space picker) and `win98`
 ("Herdr 98": a whole desktop in one mod, `win98`). Add a layout by
 writing a new file. The Files panel supports Windows folder paths with spaces,
@@ -916,8 +917,24 @@ has 124 programs (agents, editors, runtimes, tools, databases, infra);
   `<worktrees.directory>/<repo>/<branch>` on the space's machine (default
   `~/.herdr/worktrees`; see settings.json above); the
   `spaces` sidebar nests worktree spaces under their repo's and shows each
-  space's repo, branch, ahead/behind and uncommitted changes). Shipped mods
-  are Herdr's; duplicate with `mod.clone` before editing.
+  space's repo, branch, ahead/behind and uncommitted changes), and
+  `session-resume` (main's floating block: brings Claude Code and Codex
+  sessions back after a restart; it draws nothing, runs nothing and calls no
+  program until a terminal carries a `herdr.session` label, which only the
+  optional hook `contrib/session-resume/session-hook.py` writes, from the
+  agents' SessionStart/SessionEnd hooks (compact JSON: session id, folder,
+  transcript path, permission mode, the terminal's pid and boot, a state;
+  never prompts; read it from `terminals()` labels). When a kept terminal
+  comes back as a bare shell (new pid or another boot) with such a label, it
+  types `claude --resume <id>` / `codex resume --no-daemon <id>` there, rebuilt
+  from the label's checked fields, or offers to with a toast and a "Resume N
+  sessions" chip that opens its dialog. Shared `"session-resume.mode"`:
+  `"auto"`, `"ask"` or `"off"`, or `{claude, codex}` with those (default
+  `{"claude":"auto","codex":"ask"}`; the dialog sets it). Key commands, unbound
+  by default: `session-resume.resume` resumes the focused terminal's recorded
+  session now, in any state; `session-resume.offer` opens the dialog. A session
+  that ran with permissions bypassed is never resumed by itself nor with the
+  bypass). Shipped mods are Herdr's; duplicate with `mod.clone` before editing.
 
 ### Check before you finish
 

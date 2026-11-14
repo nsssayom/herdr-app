@@ -12,11 +12,13 @@ What it does with --apply:
      Claude Code's settings.json (default: ${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json)
      and Codex's hooks.json (default: ${CODEX_HOME:-~/.codex}/hooks.json),
      leaving every other hook and setting as it was
-  3. copies the mod to <Herdr app home>/mods/session-resume/
-     (default: ${HERDR_APP_HOME:-~/.config/herdr-app})
-  4. prints the layout block that makes the mod run (it is not added for you)
+  3. only with --with-mod: copies the mod to <Herdr app home>/mods/session-resume/
+     (default: ${HERDR_APP_HOME:-~/.config/herdr-app}) and prints the layout
+     block that makes it run (it is not added for you). This fork's Herdr ships
+     the mod in its main layout already; the official app needs --with-mod.
 
---uninstall removes exactly those hook entries, the mod folder and the hook script.
+--uninstall removes exactly those hook entries and the hook script (and, with
+--with-mod, the mod folder it copied).
 It never runs herdr-app, hc, claude or codex, and it never prints the contents
 of the settings files (they can hold secrets): only the hook entries it changes.
 """
@@ -32,6 +34,8 @@ import shutil
 import sys
 
 HERE = Path(__file__).resolve().parent
+# The mod ships with this fork's app; --with-mod copies it from here.
+MOD_SOURCE = HERE.parent.parent / "defaults" / "mods" / "session-resume"
 HOOK_NAME = "session-hook.py"
 MOD_NAME = "session-resume"
 MOD_FILES = ("main.js", "plan.js", "mod.json")
@@ -176,7 +180,7 @@ def copy_file(plan, src, dst, label):
 def install_mod(plan, app, hook_dir):
     folder = app / "mods" / MOD_NAME
     for name in MOD_FILES:
-        src = HERE / "mod" / name
+        src = MOD_SOURCE / name
         dst = folder / name
         if dst.exists() and filecmp.cmp(src, dst, shallow=False):
             plan.say(f"  mod: {dst} (unchanged)")
@@ -210,11 +214,21 @@ def remove(plan, path, label, backup_to=None):
         shutil.rmtree(path) if path.is_dir() else path.unlink()
 
 
+def ships_mod(app):
+    try:
+        record = json.loads((app / "installed.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    return isinstance(record, dict) and MOD_NAME in record
+
+
 def main(argv=None, env=None):
     env = dict(os.environ) if env is None else env
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--apply", action="store_true", help="write the changes (default: only say what they would be)")
-    p.add_argument("--uninstall", action="store_true", help="remove the hook entries, the mod and the hook script")
+    p.add_argument("--uninstall", action="store_true", help="remove the hook entries and the hook script (and the mod, with --with-mod)")
+    p.add_argument("--with-mod", action="store_true",
+                   help="also copy the mod into the app home, for a Herdr that doesn't ship it (the official app)")
     p.add_argument("--home", help="treat this folder as the home folder for every default below (for trying it out)")
     p.add_argument("--claude-settings", type=Path, help="Claude Code settings.json")
     p.add_argument("--codex-hooks", type=Path, help="Codex hooks.json")
@@ -235,6 +249,10 @@ def main(argv=None, env=None):
     python = args.python or default_python()
     script = hook_dir / HOOK_NAME
     stamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    # The app records the mods it ships in installed.json and replaces them on start:
+    # a copy of ours there would be moved aside as session-resume-edited.
+    shipped = ships_mod(app)
+    with_mod = args.with_mod and not shipped
 
     def steps(plan):
         plan.say(f"Herdr session resume: {'uninstall' if args.uninstall else 'install'}"
@@ -243,7 +261,8 @@ def main(argv=None, env=None):
         if args.uninstall:
             for agent in agents:
                 merge_hooks(plan, f"{agent} hooks", claude if agent == "claude" else codex, None, True)
-            remove(plan, app / "mods" / MOD_NAME, "mod", hook_dir / "backups" / stamp / "mod")
+            if with_mod:
+                remove(plan, app / "mods" / MOD_NAME, "mod", hook_dir / "backups" / stamp / "mod")
             remove(plan, script, "hook script")
         else:
             copy_file(plan, HERE / HOOK_NAME, script, "hook script")
@@ -252,7 +271,10 @@ def main(argv=None, env=None):
             for agent in agents:
                 merge_hooks(plan, f"{agent} hooks", claude if agent == "claude" else codex,
                             hook_command(python, script, agent), False)
-            install_mod(plan, app, hook_dir)
+            if with_mod:
+                install_mod(plan, app, hook_dir)
+        if args.with_mod and shipped:
+            plan.say(f"  mod: {app / 'mods' / MOD_NAME} is shipped by this Herdr; left to the app (--with-mod ignored)")
         return plan
 
     # A dry pass first: a broken settings file stops everything before anything is written.
@@ -268,15 +290,25 @@ def main(argv=None, env=None):
         plan.say("Done.")
     plan.say()
     if args.uninstall:
-        plan.say("If a layout has the session-resume floating block, remove it from that layout's root.")
+        if with_mod:
+            plan.say("If a layout has the session-resume floating block, remove it from that layout's root.")
+        else:
+            plan.say("A Herdr that ships the mod keeps it; without the hook it stays idle.")
     else:
         plan.say("Then:")
+        if shipped:
+            plan.say("  * Herdr ships the session-resume mod in its main layout here: nothing to add.")
+        elif not with_mod:
+            plan.say(f"  * The Herdr in {app} doesn't ship the session-resume mod (the official app, or this")
+            plan.say("    fork before its first start). To run it there, run again with --with-mod.")
+    if not args.uninstall and with_mod:
         plan.say("  * The mod runs only in a layout that holds it. Shipped layouts are read-only, so add this")
         plan.say("    to the root node of a personal layout (to make one from Herdr's default:")
         plan.say("    herdr-app do layout.clone '{\"name\":\"main\",\"as\":\"main-resume\"}'),")
         plan.say(f"    in {app / 'layouts'}/<your layout>.json:")
         plan.say(LAYOUT_BLOCK)
         plan.say("    (if the root already has \"floating\", add just the { ... } entry to it).")
+    if not args.uninstall:
         plan.say("  * Optional keys, in keys.json \"global\": \"<key>\": \"session-resume.resume\" (resume the")
         plan.say("    focused tab's session now) and \"<key>\": \"session-resume.offer\" (the dialog and settings).")
         if "codex" in agents:

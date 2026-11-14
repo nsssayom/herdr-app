@@ -1,15 +1,18 @@
 // session-resume: after a restart, bring each tab's Claude Code or Codex
 // session back in its own terminal.
 //
-// session-hook.py (the agents' SessionStart/SessionEnd hook) keeps a
-// `herdr.session` label on each agent's terminal. This mod reads those labels
-// live through terminals(). When a kept terminal comes back as a plain shell
-// (a reboot, a lost core), it types the resume command into it, or offers to.
+// contrib/session-resume/session-hook.py (the agents' SessionStart/SessionEnd
+// hook, installed separately) keeps a `herdr.session` label on each agent's
+// terminal (docs/labels.md). This mod reads those labels live through
+// terminals(). When a kept terminal comes back as a plain shell (a reboot, a
+// lost core), it types the resume command into it, or offers to. Without the
+// hook no terminal has the label, and the mod does nothing at all.
 //
 // One folder, two roles:
-// - the engine: a floating block in the layout. It shows a small chip while
-//   sessions wait for the person, nothing otherwise. Keys: `session-resume.resume`
-//   (resume the focused terminal's session now), `session-resume.offer` (the dialog).
+// - the engine: a floating block in the layout (main's root has one). It shows
+//   a small chip while sessions wait for the person, nothing otherwise. Keys:
+//   `session-resume.resume` (resume the focused terminal's session now),
+//   `session-resume.offer` (the dialog).
 // - the dialog (opened by the engine with props().overlay): per-tab Resume and
 //   Dismiss, and the setting. It asks the engine through shared state, because
 //   a closing dialog's tasks are cancelled.
@@ -22,7 +25,7 @@ import * as herdr from "herdr";
 import {
   LABEL, CHOICES, DEFAULTS, parseRecord, serialize, assess, assessManual, planAll, observe, atBareShell,
   markTried, markResumed, markMissing, markDismissed, judgeResume, stillOffered, freshRequest, placeOf,
-  offerText, agentName, bootProbes, EXISTS_SCRIPT, parseExists, choiceFor,
+  offerText, agentName, bootProbes, EXISTS_SCRIPT, parseExists, choiceFor, anyRecorded,
 } from "./plan.js";
 
 const {
@@ -92,6 +95,7 @@ export default class SessionResume extends View {
     this.resumed = 0;
     this.nextAutoAt = 0;
     this.seenRequest = null;
+    this.busy = false;
     if (checking()) return;
     cx.spawn(async (cx) => {
       for (;;) {
@@ -99,17 +103,25 @@ export default class SessionResume extends View {
         cx.notify(); // also ends this loop once a newer build of the mod is loaded
       }
     });
-    cx.spawn(async (cx) => {
-      this.boot = await readBoot();
-      for (;;) {
+    // Without the hook nothing carries a herdr.session label, and a tick only reads terminals().
+    cx.timer.every(TICK_MS, (cx) => {
+      if (this.busy) return;
+      this.busy = true;
+      cx.spawn(async (cx) => {
         try {
           await this.tick(cx);
         } catch (e) {
           console.log(`session-resume: ${e?.message ?? e}`);
+        } finally {
+          this.busy = false;
         }
-        await cx.sleep(TICK_MS);
-      }
+      });
     });
+  }
+
+  /** The boot id, asked once, and only once some terminal carries a session label. */
+  async ensureBoot() {
+    if (this.boot === undefined) this.boot = await readBoot();
   }
 
   // ---- engine ----------------------------------------------------------------
@@ -156,6 +168,14 @@ export default class SessionResume extends View {
     await this.checkWatches();
 
     const list = terminals();
+    if (!anyRecorded(list)) {
+      // The hook isn't installed, or no agent ran yet: nothing to watch or offer.
+      this.memory = {};
+      this.offers = [];
+      if (before) cx.notify();
+      return;
+    }
+    await this.ensureBoot();
     const seen = observe(this.memory, list, this.boot, Date.now());
     this.memory = seen.memory;
     for (const q of seen.quits) await writeIfUnchanged(q.address, q.was, q.rec);
@@ -201,6 +221,7 @@ export default class SessionResume extends View {
     const judge = (t) => (manual ? assessManual(t, this.ctx()) : assess(t, this.ctx()));
     const t = await fresh(address);
     if (!t) return why("Herdr couldn't read that terminal.");
+    if (anyRecorded([t])) await this.ensureBoot();
     let a = judge(t);
     if (a.kind === "check") {
       await this.checkPaths(a.paths);

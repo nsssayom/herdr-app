@@ -514,9 +514,7 @@ class InstallTest(unittest.TestCase):
         codex = json.loads((self.home / ".codex/hooks.json").read_text())
         self.assertEqual(codex["hooks"]["SessionEnd"][0]["hooks"][0]["command"], f"/opt/py3 {script} codex")
         self.assertTrue(os.access(script, os.X_OK))
-        for name in install.MOD_FILES:
-            self.assertEqual((self.home / ".config/herdr-app/mods/session-resume" / name).read_bytes(),
-                             (HERE / "mod" / name).read_bytes())
+        self.assertFalse((self.home / ".config/herdr-app/mods").exists(), "the mod is copied only with --with-mod")
         self.assertEqual(len(list((self.home / ".claude").glob("settings.json.bak-session-resume-*"))), 1)
         snapshot = {f: (self.home / f).read_bytes() for f in self.files()}
         self.assertIn("Everything is already in place.", self.run_install("--apply", "--python", "/opt/py3"))
@@ -531,10 +529,30 @@ class InstallTest(unittest.TestCase):
         self.assertEqual(commands[0], "other-tool start")
         self.assertTrue(commands[1].startswith("/new/python3 "))
 
+    def test_with_mod_copies_the_shipped_mod_for_an_app_that_lacks_it(self):
+        out = self.run_install("--apply", "--with-mod")
+        for name in install.MOD_FILES:
+            self.assertEqual((self.home / ".config/herdr-app/mods/session-resume" / name).read_bytes(),
+                             (install.MOD_SOURCE / name).read_bytes())
+        self.assertIn('"mod": "session-resume"', out, "it prints the layout block")
+        self.assertEqual(sorted(p.name for p in install.MOD_SOURCE.iterdir()), sorted(install.MOD_FILES))
+
+    def test_an_app_that_ships_the_mod_keeps_it(self):
+        app = self.home / ".config/herdr-app"
+        (app / "mods/session-resume").mkdir(parents=True)
+        (app / "mods/session-resume/main.js").write_text("shipped")
+        (app / "installed.json").write_text(json.dumps({"session-resume": {"main.js": "x"}}))
+        out = self.run_install("--apply", "--with-mod")
+        self.assertIn("--with-mod ignored", out)
+        self.assertIn("nothing to add", out)
+        self.assertEqual((app / "mods/session-resume/main.js").read_text(), "shipped")
+        self.run_install("--apply", "--uninstall", "--with-mod")
+        self.assertEqual((app / "mods/session-resume/main.js").read_text(), "shipped", "uninstall leaves a shipped mod")
+
     def test_uninstall_restores_the_other_hooks_exactly(self):
-        self.run_install("--apply", "--agents", "claude")
+        self.run_install("--apply", "--agents", "claude", "--with-mod")
         self.assertFalse((self.home / ".codex/hooks.json").exists(), "--agents claude leaves Codex alone")
-        self.run_install("--apply", "--uninstall", "--agents", "claude")
+        self.run_install("--apply", "--uninstall", "--agents", "claude", "--with-mod")
         self.assertEqual(json.loads(self.settings.read_text()), self.original)
         self.assertFalse((self.home / ".config/herdr-app/mods/session-resume").exists())
         self.assertFalse((self.home / ".local/share/herdr-session-resume/session-hook.py").exists())

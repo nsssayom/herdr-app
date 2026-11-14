@@ -3,7 +3,9 @@
 Herdr clients (the desktop app, the phone app, a terminal UI) share two
 things through herdr-core terminal labels: which agents a person has seen,
 and which are pinned. Look at an agent on one client and it stops being
-"done" on all of them; pin it on one and it's pinned everywhere.
+"done" on all of them; pin it on one and it's pinned everywhere. An optional
+agent hook also records there which agent session each terminal runs, so a
+client can resume it after a restart.
 
 Labels live on the terminal, so this state ends with it. Every client
 already gets them: `events.subscribe` snapshots carry `labels` and `turn`,
@@ -59,6 +61,47 @@ client's usual order.
 
 In the desktop app, mods pin with `terminal.pin {terminal, pinned}` and
 read `pinned` from `agents()`; they never write the label themselves.
+
+## `herdr.session=<json>`: the agent session a terminal runs
+
+Written by the optional hook `contrib/session-resume/session-hook.py`, which
+Claude Code and Codex run at SessionStart and SessionEnd, on the terminal the
+agent runs in (`HC_TERMINAL_ID`, on its own core `HC_TERMINAL_SOCKET`). Read
+by the desktop app's `session-resume` mod, which brings the session back when
+a kept terminal returns as a shell after a reboot or a lost core. Without the
+hook the label never exists and the mod does nothing.
+
+Compact JSON, version 1:
+
+```json
+{"v":1,"agent":"claude","id":"<uuid>","cwd":"/abs","transcript":"/abs/x.jsonl",
+ "mode":"acceptEdits","root":3682,"boot":"<boot id>","agent_pid":3685,
+ "state":"running","why":null,"at":1794675758063,"tried":null}
+```
+
+- `agent`: `claude` or `codex`. `id`: the session id, a lowercase UUID.
+  `cwd`: its folder. `transcript`: the agent's own session file (checked for
+  existence, never read), or null. `mode`: the permission mode from the
+  agent's flags, or null (`bypassPermissions` when they bypassed checks).
+- `root`: the terminal's `pid` when the session started; `boot`: that boot's
+  id (macOS `kern.bootsessionuuid`, Linux `/proc/sys/kernel/random/boot_id`).
+  A terminal whose `pid` or boot differs came back without its program.
+  `agent_pid`: the agent's process group, or null when not known yet.
+- `state`: `running` (started, or a resume was typed), `lost` (Claude ended
+  with reason `other`: a signal, such as a shutdown), `exited` (Codex ended;
+  it reports `other` for a quit too), `ended` (a person quit, or a client saw
+  the shell come back while it watched), `missing` (a typed resume exited at
+  once). `why`: the end reason. `at`: ms since the epoch.
+- `tried`: `<pid>@<boot>#<mark>`: a client claimed a resume of this
+  incarnation (`#dismissed`: the person declined it). Write it, read it back,
+  and type only if your mark is still there.
+
+A SessionEnd changes the label only if its `id` is the session there, so a
+late hook of an older session can't overwrite a newer one. A client types a
+command rebuilt from these fields alone: `cd -- '<cwd>' && claude --resume
+<id>`, adding `--permission-mode` only for `acceptEdits`, `plan`, `auto` or
+`dontAsk`; or `cd -- '<cwd>' && codex resume --no-daemon <id>`. Never a bypass.
+No prompts, messages, command lines or environment are stored.
 
 ## Adding more
 
