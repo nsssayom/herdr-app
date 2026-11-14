@@ -179,5 +179,15 @@
         }
       ]
     }
+  ],
+  "floating": [
+    {
+      "id": "session-resume",
+      "content": {
+        "mod": "session-resume"
+      },
+      "edge": "bottom",
+      "align": "end"
+    }
   ]
 }
