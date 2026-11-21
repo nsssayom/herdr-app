@@ -39,7 +39,7 @@ draws text; read or change other mods' code at run time.
 ## Personal fork additions
 
 `contrib/dev-workspace/` supplies the optional `dev` layout, Inter UI font,
-JetBrains Mono terminals, and neutral light/dark themes; its installer creates
+Meslo terminals matching macOS Terminal, and neutral light/dark themes; its installer creates
 personal files and a `dev-tabs` mod, preserving the shipped layout. Switch with
 `layout.switch {name: "dev"}`; switch back to `main` to undo the appearance.
 The tab bar's VS Code button opens remote Unix folders through local VS Code

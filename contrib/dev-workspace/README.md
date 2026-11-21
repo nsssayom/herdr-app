@@ -1,6 +1,6 @@
 # Personal developer workspace
 
-A quiet neutral layout for this Mac: Inter UI text, JetBrainsMonoNL Nerd Font
+A quiet neutral layout for this Mac: Inter UI text, Meslo LG M DZ for Powerline
 14 px terminals with 1.08 line height, readable status colors, a 252 px sidebar,
 smaller pane corners, and closer pane spacing. Both fonts are already installed
 on the owner's Mac. Other machines need those fonts or substitutions in dev.json.
