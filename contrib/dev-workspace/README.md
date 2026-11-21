@@ -2,7 +2,8 @@
 
 A quiet neutral layout for this Mac: Inter UI text, Meslo LG M DZ for Powerline
 14 px terminals with 1.08 line height, readable status colors, a 252 px sidebar,
-smaller pane corners, and closer pane spacing. Both fonts are already installed
+smaller pane corners, and closer pane spacing. The sidebar uses folder outlines,
+small project color markers, quiet machine groups and a thin active marker. Both fonts are already installed
 on the owner's Mac. Other machines need those fonts or substitutions in dev.json.
 System light/dark appearance selects the matching palette. No animation or
 blur, no settings.json changes, no session or process changes.
@@ -14,9 +15,9 @@ herdr-app check ~/.config/herdr-app/mods/dev-tabs
 herdr-app do layout.switch --name dev
 ```
 
-The installer creates personal layout/theme files and a personal tab-bar copy,
+The installer creates personal layout/theme files and a personal tab-bar and spaces copies,
 backing up changed files. Updates do not replace these copies. Rerun the installer
-after updating this fork to refresh the personal tab bar (it makes a backup).
+after updating this fork to refresh the personal panels (it makes a backup).
 Switch back with `herdr-app do layout.switch --name main`.
 
 The VS Code button opens remote Unix folders through the local VS Code and its

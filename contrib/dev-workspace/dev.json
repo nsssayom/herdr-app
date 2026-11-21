@@ -50,7 +50,10 @@
               },
               "min": 90,
               "content": {
-                "mod": "spaces"
+                "mod": "dev-spaces",
+                "props": {
+                  "appearance": "quiet"
+                }
               }
             },
             {

@@ -40,7 +40,9 @@ draws text; read or change other mods' code at run time.
 
 `contrib/dev-workspace/` supplies the optional `dev` layout, Inter UI font,
 Meslo terminals matching macOS Terminal, and neutral light/dark themes; its installer creates
-personal files and a `dev-tabs` mod, preserving the shipped layout. Switch with
+personal files and `dev-tabs` / `dev-spaces` mods, preserving the shipped layout.
+The spaces mod accepts `content.props.appearance: "quiet"` on the `spaces` node
+for folder outlines, compact selection and spaced machine headings. Switch with
 `layout.switch {name: "dev"}`; switch back to `main` to undo the appearance.
 The tab bar's VS Code button opens remote Unix folders through local VS Code
 Remote-SSH, resolving the machine's configured SSH target through hc. Renamed

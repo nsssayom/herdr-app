@@ -18,6 +18,7 @@ function find(node, id) {
 }
 
 // The sidebar's rail goes by its width, not a flag: dragging its edge narrows it too.
+const quiet = () => find(layout(), "spaces")?.content?.props?.appearance === "quiet";
 const narrow = () => (find(layout(), "sidebar")?.size?.px ?? Infinity) < 160;
 
 // Where a space is now: its first terminal's live folder, else where it was made.
@@ -362,6 +363,7 @@ export default class Spaces extends View {
 
   // The rows, under a header per machine once one isn't this computer.
   grouped(t, collapsed) {
+    const modern = quiet();
     const rows = this.ordered();
     const draw = (r) => (collapsed ? this.compact(r, t) : this.row(r, t));
     // Where the active space's row lands among the children this returns: the list scrolls by its direct
@@ -392,7 +394,7 @@ export default class Spaces extends View {
       const state = connected ? "connected" : (machine?.state ?? "asleep").replace(/_/g, " ");
       const icon = svg(`mods/workspace-chrome/${m ? "server" : "monitor"}.svg`).size(collapsed ? 13 : 14).flex_none();
       // The status dot sits on the machine's icon, in the rail and the full list alike.
-      const badge = div().absolute().right(-3).bottom(-2).size(collapsed ? 6 : 7).rounded(4).border_1().border_color(t.chrome).bg(connected ? t.ansi2 : t.dim);
+      const badge = div().absolute().right(-3).bottom(-2).size(collapsed || modern ? 5 : 7).rounded(4).border_1().border_color(t.chrome).bg(connected ? t.ansi2 : t.dim);
       const fold = (_e, cx) => {
         if (collapsed && login) { run("app.settings", { section: "machines" }); return; }
         folded ? this.folded.delete(m) : this.folded.add(m);
@@ -412,14 +414,15 @@ export default class Spaces extends View {
           .on_click(fold)
           .when(Boolean(logout), el => el.child(logout))
           .child(div().relative().flex_none().child(icon).when(Boolean(m), el => el.child(badge)))
-        : h_flex().id(`machine-${m ?? "local"}`).h(28).flex_none().pl(2).pr(4).gap(6).items_center().rounded(7)
-          .text_size(11.5).text_color(t.dim).cursor_pointer()
+        : h_flex().id(`machine-${m ?? "local"}`).h(modern ? 32 : 28).mt(modern ? 8 : 0).flex_none().pl(modern ? 8 : 2).pr(4).gap(7).items_center().rounded(modern ? 4 : 7)
+          .text_size(11.5).text_color(modern ? t.muted : t.dim).cursor_pointer()
           .hover(s => s.bg(t.hover).text_color(t.muted)).active(s => s.bg(t.selected))
           .on_click(fold)
-          .child(h_flex().w(14).flex_none().justify_center()
-            .child(svg(`mods/workspace-chrome/chevron-${folded ? "right" : "down"}.svg`).size(12)))
-          .child(div().id(`machine-state-${m ?? "local"}`).relative().flex_none().tooltip(m ? `${m} · ${state}` : "This computer").child(icon).child(badge))
-          .child(div().flex_1().min_w(0).truncate().child(m ?? "This computer"))
+          .when(!modern, el => el.child(h_flex().w(14).flex_none().justify_center()
+            .child(svg(`mods/workspace-chrome/chevron-${folded ? "right" : "down"}.svg`).size(12))))
+          .child(div().id(`machine-state-${m ?? "local"}`).relative().flex_none().tooltip(m ? `${m} · ${state}` : "This computer").child(icon).when(!modern || Boolean(m), el => el.child(badge)))
+          .child(div().flex_1().min_w(0).truncate().child(m ?? (modern ? "Local" : "This computer")))
+          .when(modern, el => el.child(svg(`mods/workspace-chrome/chevron-${folded ? "right" : "down"}.svg`).size(10).flex_none().text_color(t.dim)))
           .when(!connected && !rebuilt && !login, el => el.child(div().flex_none().child(state)))
           .when(rebuilt, el => el.child(h_flex().flex_none().gap(3).items_center()
             .child(div().max_w(140).truncate().child(repair?.error || "rebuilt ·"))
@@ -485,6 +488,7 @@ export default class Spaces extends View {
   }
 
   row({ w, i, g, tree }, t) {
+    const modern = quiet();
     const on = w.active;
     const dropping = dropState(drag(), w);
     const fromIndex = this.pressed === null ? -1 : spaces().findIndex(s => s.id === this.pressed);
@@ -495,11 +499,12 @@ export default class Spaces extends View {
       .relative()
       .id(`space-${w.id}`)
       .px(8)
-      .h(rowHeight({ tree }))
+      .h(rowHeight({ tree }) + (modern ? 4 : 0))
       .flex_none()
       .justify_center()
-      .rounded(8)
+      .rounded(modern ? 4 : 8)
       .when(on, (el) => el.bg(t.selected))
+      .when(on && modern, el => el.child(div().absolute().left(0).top(9).bottom(9).w(2).rounded(1).bg(t.accent)))
       .when(!on, (el) => el.hover((s) => s.bg(t.hover)))
       .when(this.pressed === w.id && this.over !== w.id, (el) => el.opacity(0.5))
       .when(this.pressed !== null && this.over === w.id && this.pressed !== w.id, (el) => el.child(
@@ -538,7 +543,10 @@ export default class Spaces extends View {
           .gap(9)
           .items_center()
           .when(Boolean(tree), el => el.pl(22).child(svg("mods/workspace-chrome/branch.svg").size(13).flex_none().text_color(t.dim)))
-          .when(!tree, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
+          .when(!tree && !modern, el => el.child(h_flex().size(18).flex_none().rounded(5).bg(fill).items_center().justify_center().text_size(10.5).font_bold().text_color("#ffffff").child([...w.name][0]?.toUpperCase() ?? "?")))
+          .when(!tree && modern, el => el.child(div().relative().size(18).flex_none()
+            .child(svg("mods/workspace-chrome/folder.svg").size(15).text_color(on ? t.accent : t.muted))
+            .child(div().absolute().right(0).bottom(0).size(3).rounded_full().bg(fill))))
           .child(div().flex_initial().min_w(SIDE_MIN).truncate().text_color(t.foreground).child(w.name))
           .child(g ? this.gitTail(g, tree, w.name, t) : div().flex_1()),
       );
@@ -564,6 +572,7 @@ export default class Spaces extends View {
   }
 
   render() {
+    const modern = quiet();
     const t = theme();
     const collapsed = narrow();
     const palette = ["ansi6", "ansi3", "ansi4", "ansi5", "ansi2", "ansi1"];
@@ -587,7 +596,7 @@ export default class Spaces extends View {
       if (this.activeAt >= 0) this.scroll.scroll_to_item(this.activeAt);
     }
     return v_flex().size_full().min_h(0).bg(t.chrome).text_size(13)
-      .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(11.5).text_color(t.dim)
+      .child(h_flex().h(31).pl(16).pr(10).items_center().justify_between().text_size(modern ? 12 : 11.5).text_color(modern ? t.muted : t.dim)
         .when(collapsed, el => el.pl(0).pr(0).justify_center())
         .when(!collapsed, el => el.child("Spaces"))
         .child(div().id("space-new").size(26).flex_none().flex().items_center().justify_center().rounded(6).hover(s => s.bg(t.hover).text_color(t.foreground))
