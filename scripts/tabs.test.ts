@@ -144,7 +144,7 @@ test("a shell's title never replaces its tab's name", () => {
 
 // The Editor button: what it runs, with the platform's default or the person's choice.
 type Pane = { pane: string; tab: string; cwd?: string };
-function editorBar(opts: { platform?: string; editor?: unknown; machine?: string | null; panes?: Pane[]; focused?: unknown; exec?: (cmd: string, args: string[]) => Promise<unknown> } = {}) {
+function editorBar(opts: { platform?: string; editor?: unknown; machine?: string | null; connection?: unknown; panes?: Pane[]; focused?: unknown; exec?: (cmd: string, args: string[]) => Promise<unknown> } = {}) {
   const ran: [string, string[]][] = [], toasts: Record<string, unknown>[] = [], overlays: Record<string, any>[] = [], tasks: Promise<unknown>[] = [];
   const env: Record<string, unknown> = {
     View: class {}, div: element, svg: element, image: element, h_flex: element,
@@ -153,6 +153,7 @@ function editorBar(opts: { platform?: string; editor?: unknown; machine?: string
     panes: () => opts.panes ?? [{ pane: "p1", tab: "t1", cwd: "/work/My \"quoted\" folder's copy" }],
     focused: () => opts.focused ?? { pane: "p1" },
     run() {}, home: () => "/Users/me",
+    hc: async () => ({ code: 0, stdout: JSON.stringify({ machines: [opts.connection ?? { name: opts.machine, target: "dev@ssh-alias" }] }), stderr: "" }),
     exec: opts.exec ?? (async (cmd: string, args: string[]) => { ran.push([cmd, args]); return { code: 0, stdout: "", stderr: "" }; }),
     notify(n: Record<string, unknown>) { toasts.push(n); return "n1"; },
     openOverlay(o: Record<string, unknown>) { overlays.push(o); return "o1"; },
@@ -161,7 +162,7 @@ function editorBar(opts: { platform?: string; editor?: unknown; machine?: string
     layout: () => null, settings: () => ({ zoom: 1 }), drag: () => null,
     localStorage: { getItem: () => null, setItem() {} },
   };
-  const body = `${source.replace(/^import .*;\n/gm, "").replace(/^export (?!default)/gm, "").replace("export default class Tabs", "class Tabs")}; return { Tabs, editorArgv, workFolder, installedEditors, EDITORS };`;
+  const body = `${source.replace(/^import .*;\n/gm, "").replace(/^export (?!default)/gm, "").replace("export default class Tabs", "class Tabs")}; return { Tabs, editorArgv, remoteEditorArgv, workFolder, installedEditors, EDITORS };`;
   const mod = new Function(...Object.keys(env), body)(...Object.values(env));
   const view = new mod.Tabs();
   view.init();
@@ -226,14 +227,36 @@ test("the folder is the focused pane's in the shown space, else where the space 
   expect(await run({ pane: "p2" }, [{ pane: "p2", tab: "t1" }])).toBe("/made/here");
 });
 
-test("a space on another machine dims the button and opens nothing here", async () => {
-  const bar = editorBar({ machine: "vehiclesec" });
-  const b = bar.button()!;
-  expect(String(b.calls.tooltip[0])).toContain("vehiclesec");
-  expect(b.calls.hover).toBeUndefined();
+test("a renamed remote space opens the actual SSH target in local VS Code", async () => {
+  const bar = editorBar({ machine: "vehiclesec", panes: [{ pane: "p1", tab: "t1", cwd: "/work/a b/#draft?%" }] });
+  expect(String(bar.button()!.calls.tooltip[0])).toContain("vehiclesec");
   await bar.click();
-  expect(bar.ran).toEqual([]);
+  expect(bar.ran).toEqual([["open", ["-a", "Visual Studio Code", "vscode://vscode-remote/ssh-remote+dev%40ssh-alias/work/a%20b/%23draft%3F%25"]]]);
   expect(bar.toasts).toEqual([]);
+});
+
+test("remote CLI launch uses a folder URI and refuses unsupported routing", async () => {
+  const bar = editorBar({ platform: "linux", machine: "renamed" });
+  await bar.click();
+  expect(bar.ran[0]).toEqual(["code", ["--folder-uri", expect.stringContaining("ssh-remote+dev%40ssh-alias/")]]);
+  for (const connection of [{name:"renamed",target:"ssh host",via:true}, {name:"renamed",target:"user@host:2222"}, {name:"other",target:"host"}]) {
+    const bad = editorBar({ machine: "renamed", connection });
+    await bad.click();
+    expect(bad.ran).toEqual([]);
+    expect(bad.toasts[0].level).toBe("error");
+  }
+  const custom = editorBar({ machine:"renamed", editor:{name:"Zed",argv:["zed","{folder}"]} });
+  await custom.click();
+  expect(custom.ran).toEqual([]);
+  expect(custom.toasts[0].body).toContain("built-in VS Code");
+});
+
+test("remote folders preserve Unicode and reject control characters", () => {
+  const { remoteEditorArgv } = editorBar().mod;
+  const tool = { argv: ["code.cmd", "{folder}"] };
+  expect(remoteEditorArgv(tool, "my-alias", "/repo/বাংলা")).toEqual(["code.cmd", "--folder-uri", `vscode-remote://ssh-remote+my-alias/repo/${encodeURIComponent("বাংলা")}`]);
+  for (const folder of ["relative/path", "/repo/line\nbreak", "/repo/\u0000"]) expect(() => remoteEditorArgv(tool, "host", folder)).toThrow("absolute Unix");
+  expect(() => remoteEditorArgv(tool, "-oProxyCommand=bad", "/repo")).toThrow("SSH config alias");
 });
 
 test("a failed launch shows why in an error toast", async () => {
