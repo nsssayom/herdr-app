@@ -153,7 +153,7 @@ test("the keyboard chooses in both menus", () => {
 
 test("a pane goes out into a tab of its own only from a tab with others", () => {
   const draw = open({ tab: "pane", target: { pane: "p3" } });
-  expect(draw().labels).toEqual(["Split right", "Split down", "Zoom", "Move to new tab", "Close pane"]);
+  expect(draw().labels).toEqual(["Rename", "Split right", "Split down", "Zoom", "Move to new tab", "Close pane"]);
   row(draw, "Move to new tab").click();
   expect(ran).toEqual([["pane.move", { tab: "new", pane: "p3" }]]);
   expect(open({ tab: "pane", target: { pane: "p1" } })().labels).not.toContain("Move to new tab");
@@ -173,9 +173,9 @@ test("hints show only keys that do what the item does", () => {
   expect(tab().rows.filter((r) => r.label.startsWith("Move")).map((r) => r.hint)).toEqual(["", "", ""]);
   expect(open({ tab: "move-tab", target: { id: "t1", space: "s1" } })().rows[0].hint).toBe("");
   const pane = () => open({ tab: "pane", target: { pane: "p3" } })().rows;
-  expect(pane().map((r) => r.hint)).toEqual(["cmd-d", "", "cmd-z", "", ""]);
+  expect(pane().map((r) => r.hint)).toEqual(["", "cmd-d", "", "cmd-z", "", ""]);
   state.keys.push({ section: "global", keys: "cmd-shift-t", action: "pane.move:new" });
-  expect(pane()[3].hint).toBe("cmd-shift-t");
+  expect(pane().find((r) => r.label === "Move to new tab")!.hint).toBe("cmd-shift-t");
 });
 
 test("every icon the menus draw is shipped", () => {
