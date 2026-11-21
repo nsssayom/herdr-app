@@ -17,12 +17,10 @@ def main():
     files = [(here/'dev.json', 'layouts/dev.json'),
              (here/'dev-dark.json', 'themes/dev-dark.json'),
              (here/'dev-light.json', 'themes/dev-light.json')]
-    # Personal panel copies survive startup's shipped-mod refresh.
+    # A personal copy of the tab bar survives startup's shipped-mod refresh.
     # Keep assets at their existing shipped paths; all are bundled with Herdr.
-    for mod in ('tabs', 'spaces'):
-        source_dir = root/'defaults/mods'/mod
-        files.extend((p, str(Path('mods')/('dev-'+mod)/p.relative_to(source_dir)))
-                     for p in sorted(source_dir.rglob('*')) if p.is_file())
+    files.extend((p, str(Path('mods/dev-tabs')/p.relative_to(root/'defaults/mods/tabs')))
+                 for p in sorted((root/'defaults/mods/tabs').rglob('*')) if p.is_file())
     for source, relative in files:
         target = args.app_home.expanduser()/relative
         data = source.read_bytes()
