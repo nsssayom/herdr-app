@@ -1,6 +1,6 @@
 import { View, div, svg, image } from "gpui-kit";
 import { h_flex, ScrollHandle } from "gpui-base";
-import { spaces, panes, focused, run, exec, home, notify, openOverlay, theme, window, shared, layout, settings, drag } from "herdr";
+import { spaces, panes, focused, run, exec, hc, home, notify, openOverlay, theme, window, shared, layout, settings, drag } from "herdr";
 
 function find(node, id) {
   if (node?.id === id) return node;
@@ -80,6 +80,23 @@ export function editorArgv(argv, folder) {
   return argv.some(a => a.includes("{folder}")) ? out : [...out, folder];
 }
 
+// Remote folders are opened by the local editor, using the SSH target recorded
+// by core (not its display name). Only known VS Code launchers opt in.
+export function remoteEditorArgv(tool, target, folder) {
+  const argv = tool.argv;
+  const mac = argv.length === 4 && argv[0] === "open" && argv[1] === "-a" && argv[2] === "Visual Studio Code" && argv[3] === "{folder}";
+  const cli = ["code", "code.cmd"].includes(argv[0]) && argv.length === 2 && argv[1] === "{folder}";
+  if (!mac && !cli) throw new Error("Remote folders currently support the built-in VS Code editor. Right-click to choose VS Code.");
+  if (typeof target !== "string" || !/^(?:[A-Za-z0-9_.-]+@)?[A-Za-z0-9_][A-Za-z0-9_.-]*$/.test(target)) {
+    throw new Error("This connection needs an SSH config alias for VS Code Remote-SSH (custom commands and explicit ports are not supported).");
+  }
+  if (typeof folder !== "string" || !folder.startsWith("/") || /[\u0000-\u001f\u007f]/.test(folder)) throw new Error("Remote-SSH needs an absolute Unix folder path.");
+  const path = folder.split("/").map(encodeURIComponent).join("/");
+  const authority = `ssh-remote+${encodeURIComponent(target)}`;
+  return mac ? ["open", "-a", "Visual Studio Code", `vscode://vscode-remote/${authority}${path}`]
+    : [argv[0], "--folder-uri", `vscode-remote://${authority}${path}`];
+}
+
 // Where you're working: the focused pane's live folder when it's in the shown space,
 // else where the space is (its first terminal's folder, as the menu's place()).
 export function workFolder(space, f, ps) {
@@ -152,9 +169,19 @@ export default class Tabs extends View {
     const folder = workFolder(space, focused(), panes());
     const failed = (body) => notify({ title: `Couldn't open ${tool.name}`, body, level: "error" });
     if (!folder) return failed(`${space.name} has no folder yet.`);
-    const [command, ...args] = editorArgv(tool.argv, folder);
     cx.spawn(async () => {
+      let command;
       try {
+        let argv = editorArgv(tool.argv, folder);
+        if (space.machine) {
+          const result = await hc(["machine", "ls"]);
+          if (result.code !== 0) throw new Error(result.stderr || "Could not read the SSH connection from Herdr core.");
+          const machine = JSON.parse(result.stdout).machines?.find(m => m.name === space.machine);
+          if (!machine || machine.via) throw new Error("This machine has no SSH target that VS Code can use.");
+          argv = remoteEditorArgv(tool, machine.target, folder);
+        }
+        const [cmd, ...args] = argv;
+        command = cmd;
         const r = await exec(command, args);
         if (r.code !== 0) failed((r.stderr || r.stdout).trim().split("\n").pop() || `${command} exited with code ${r.code}.`);
       } catch (e) {
@@ -234,7 +261,6 @@ export default class Tabs extends View {
     const platform = w?.platform ?? "linux";
     const editorButton = () => {
       const tool = editor(platform);
-      // A space on another machine has its folders there: an editor here can't open them.
       const away = space.machine;
       // The menu lists the editors found here: looked for on each opening (one quick run).
       const choose = (_e, cx) => {
@@ -245,11 +271,11 @@ export default class Tabs extends View {
         });
       };
       return h_flex().id("open-editor").h(26).px(8).gap(5).flex_none().items_center().rounded(6).text_size(12).bg(t.chrome)
-        .text_color(away ? t.dim : t.muted)
-        .when(!away, el => el.hover(s => s.bg(t.hover)).active(s => s.bg(t.selected)))
-        .tooltip(away ? `${space.name} is on ${away}: its folders aren't on this computer, so an editor here can't open them.` : `Open this folder in ${tool.name}. Right-click to choose the editor.`)
+        .text_color(t.muted)
+        .hover(s => s.bg(t.hover)).active(s => s.bg(t.selected))
+        .tooltip(away ? `Open this folder on ${away} in VS Code using Remote-SSH. Requires the Remote-SSH extension.` : `Open this folder in ${tool.name}. Right-click to choose the editor.`)
         .on_mouse_down("left", stop).on_mouse_down("right", choose)
-        .on_click((_e, cx) => { if (!away) this.openEditor(space, tool, cx); })
+        .on_click((_e, cx) => { this.openEditor(space, tool, cx); })
         .child(svg("mods/tabs/code.svg").size(14)).child(div().max_w(110).truncate().child(tool.name));
     };
     return h_flex().size_full().min_w(0).px(10).pl(lightsPadding).gap(3).items_center().bg(t.chrome).border_b(1).border_color(t.border)

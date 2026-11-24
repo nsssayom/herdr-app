@@ -36,6 +36,17 @@ You can't: use HTML, CSS, a web view, Node APIs or `setTimeout`; draw
 outside your block except through overlays; change how a terminal itself
 draws text; read or change other mods' code at run time.
 
+## Personal fork additions
+
+`contrib/dev-workspace/` supplies the optional `dev` layout, Inter UI font,
+Meslo terminals matching macOS Terminal, and neutral light/dark themes; its installer creates
+personal files and a `dev-tabs` mod, preserving the shipped layout. Switch with
+`layout.switch {name: "dev"}`; switch back to `main` to undo the appearance.
+The tab bar's VS Code button opens remote Unix folders through local VS Code
+Remote-SSH, resolving the machine's configured SSH target through hc. Renamed
+machines work; custom `--via` connections, explicit ports (use an SSH alias),
+and custom editor commands are rejected. The extension handles login/trust.
+
 ## What mods are written in
 
 Mods use **gpui-kit** (its gpui-shell): JavaScript that describes **GPUI**
